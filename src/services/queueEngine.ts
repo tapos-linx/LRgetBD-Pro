@@ -433,3 +433,60 @@ export async function buildVerifiedArchiveZip(tasks: QueueTask[]): Promise<{
     auditFileName,
   };
 }
+
+export interface QueueProgressMetrics {
+  totalCount: number;
+  completedCount: number;
+  queuedCount: number;
+  failedCount: number;
+  verifiedPdfCount: number;
+  percentage: number;
+}
+
+export function calculateQueueProgress(
+  tasks: Array<{ status: string; pdfVerified?: boolean }>
+): QueueProgressMetrics {
+  const totalCount = tasks.length;
+  if (totalCount === 0) {
+    return {
+      totalCount: 0,
+      completedCount: 0,
+      queuedCount: 0,
+      failedCount: 0,
+      verifiedPdfCount: 0,
+      percentage: 0,
+    };
+  }
+
+  let completedCount = 0;
+  let queuedCount = 0;
+  let failedCount = 0;
+  let verifiedPdfCount = 0;
+
+  for (const t of tasks) {
+    if (t.status === 'CACHED_INDEXEDDB' || t.status === 'HTML_INDEX_EXTRACTED') {
+      completedCount++;
+    } else if (t.status === 'QUEUED') {
+      queuedCount++;
+    } else if (t.status === 'FAILED_RETRY' || t.status === 'CORS_BRIDGE_REQUIRED') {
+      failedCount++;
+    }
+
+    if (t.pdfVerified) {
+      verifiedPdfCount++;
+    }
+  }
+
+  const rawPercent = (completedCount / totalCount) * 100;
+  const percentage = Math.min(100, Math.max(0, Math.round(rawPercent)));
+
+  return {
+    totalCount,
+    completedCount,
+    queuedCount,
+    failedCount,
+    verifiedPdfCount,
+    percentage,
+  };
+}
+

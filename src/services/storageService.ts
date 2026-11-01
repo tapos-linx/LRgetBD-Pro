@@ -7,8 +7,9 @@ import {
 import { detectDefaultTransportMode } from './eporchaTechClient';
 
 const DB_NAME = 'LandArchiveBD_v2';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const BLOB_STORE = 'lr_eporcha_blobs_v2';
+const ALIAS_BLOB_STORE = 'lr_verified_blobs';
 const RECORD_STORE = 'lr_eporcha_records_v2';
 
 const QUEUE_STORAGE_KEY = 'lr_eporcha_queue_v2';
@@ -26,6 +27,9 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(BLOB_STORE)) {
         db.createObjectStore(BLOB_STORE, { keyPath: 'taskId' });
       }
+      if (!db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+        db.createObjectStore(ALIAS_BLOB_STORE, { keyPath: 'taskId' });
+      }
       if (!db.objectStoreNames.contains(RECORD_STORE)) {
         db.createObjectStore(RECORD_STORE, { keyPath: 'recordId' });
       }
@@ -38,11 +42,67 @@ function openDatabase(): Promise<IDBDatabase> {
 export async function saveVerifiedPdfBlob(record: VerifiedBlobRecord): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(BLOB_STORE, 'readwrite');
+    const storeNames = [BLOB_STORE];
+    if (db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+      storeNames.push(ALIAS_BLOB_STORE);
+    }
+    const tx = db.transaction(storeNames, 'readwrite');
     tx.objectStore(BLOB_STORE).put(record);
+    if (db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+      tx.objectStore(ALIAS_BLOB_STORE).put(record);
+    }
     tx.oncomplete = () => {
       db.close();
       resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function batchUpdateVerifiedBlobFileNames(
+  renameMap: Map<string, string>
+): Promise<{ updatedCount: number }> {
+  if (renameMap.size === 0) return { updatedCount: 0 };
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const storeNames = [BLOB_STORE];
+    if (db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+      storeNames.push(ALIAS_BLOB_STORE);
+    }
+    const tx = db.transaction(storeNames, 'readwrite');
+    const primaryStore = tx.objectStore(BLOB_STORE);
+    const aliasStore = db.objectStoreNames.contains(ALIAS_BLOB_STORE)
+      ? tx.objectStore(ALIAS_BLOB_STORE)
+      : null;
+
+    let updatedCount = 0;
+    const req = primaryStore.openCursor();
+
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        const record = cursor.value as VerifiedBlobRecord;
+        if (renameMap.has(record.taskId)) {
+          const newName = renameMap.get(record.taskId)!;
+          if (newName && newName !== record.fileName) {
+            record.fileName = newName;
+            cursor.update(record);
+            if (aliasStore) {
+              aliasStore.put(record);
+            }
+            updatedCount++;
+          }
+        }
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => {
+      db.close();
+      resolve({ updatedCount });
     };
     tx.onerror = () => {
       db.close();
@@ -88,8 +148,15 @@ export async function getAllVerifiedPdfBlobs(): Promise<VerifiedBlobRecord[]> {
 export async function clearAllVerifiedPdfBlobs(): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(BLOB_STORE, 'readwrite');
+    const storeNames = [BLOB_STORE];
+    if (db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+      storeNames.push(ALIAS_BLOB_STORE);
+    }
+    const tx = db.transaction(storeNames, 'readwrite');
     tx.objectStore(BLOB_STORE).clear();
+    if (db.objectStoreNames.contains(ALIAS_BLOB_STORE)) {
+      tx.objectStore(ALIAS_BLOB_STORE).clear();
+    }
     tx.oncomplete = () => {
       db.close();
       resolve();

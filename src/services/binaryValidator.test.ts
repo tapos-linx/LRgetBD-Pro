@@ -17,6 +17,7 @@ import {
 import {
   buildQueueTasksForUpazila,
   calculatePoliteJitterDelay,
+  calculateQueueProgress,
   generateManifestAuditCsv,
 } from './queueEngine';
 
@@ -288,6 +289,137 @@ test('buildUnifiedQueueForDocumentSelection explicitly populates all Mouza IDs w
   // 24 Mouzas * 21 tasks per Mouza across all 5 endpoints and 5 surveys = 504 tasks
   assert.equal(unified.tasks.length, 24 * 21);
 });
+
+test('batchRenameService applies regex and template patterns to rename downloaded PDFs', async () => {
+  const {
+    applyRegexRename,
+    applyTemplateRename,
+    computeBatchRenamePreview,
+  } = await import('./batchRenameService');
+
+  // 1. Regex Renaming
+  const regexRes1 = applyRegexRename(
+    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_new-color.pdf',
+    'new-color',
+    'g',
+    'verified-v2'
+  );
+  assert.equal(
+    regexRes1.newFileName,
+    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_verified-v2.pdf'
+  );
+
+  const regexCapture = applyRegexRename(
+    'Goalai_RS.pdf',
+    '([A-Za-z]+)_([A-Za-z]+)',
+    '',
+    'Record_$1_$2'
+  );
+  assert.equal(regexCapture.newFileName, 'Record_Goalai_RS.pdf');
+
+  // Invalid Regex does not throw and returns error object
+  const invalidRegex = applyRegexRename('sample.pdf', '[unclosed', '', '');
+  assert.ok(invalidRegex.error);
+  assert.equal(invalidRegex.newFileName, 'sample.pdf');
+
+  // 2. Token Template Renaming
+  const sampleTask = {
+    id: 'task-test-1',
+    endpointType: 'mouza-vittik-khatian' as const,
+    docType: 'MOUZA_KHATIAN_BOOK' as const,
+    divisionNameEn: 'Chittagong',
+    districtNameEn: 'Brahmanbaria',
+    districtNameBn: 'ব্রাহ্মণবাড়িয়া',
+    upazilaNameEn: 'Nabinagar',
+    upazilaNameBn: 'নবীনগর',
+    unionNameEn: '20-No Kaitala South Union',
+    unionNameBn: '২০নং কাইতলা দক্ষিণ ইউনিয়ন',
+    mouzaId: 'mz-114',
+    mouzaJlNo: '114',
+    mouzaNameEn: 'Goalai',
+    mouzaNameBn: 'গোয়ালী',
+    surveyType: 'RS' as const,
+    bookStyle: { layout: 'new' as const, colorMode: 'color' as const },
+    fileName: 'old_file_name.pdf',
+    targetUrl: 'https://eporcha.tech/test',
+    status: 'CACHED_INDEXEDDB' as const,
+    pdfVerified: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    retryCount: 0,
+  };
+
+  const templated = applyTemplateRename(
+    sampleTask,
+    '{district}_{upazila}_JL-{jl}_{mouza}_{survey}_{mode}.pdf'
+  );
+  assert.equal(
+    templated,
+    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_mouza-vittik-khatian.pdf'
+  );
+
+  // 3. Batch Preview Computation
+  const preview = computeBatchRenamePreview({
+    tasks: [sampleTask],
+    verifiedBlobTaskIds: new Set(['task-test-1']),
+    mode: 'REGEX',
+    templatePattern: '',
+    regexPattern: '^old_',
+    regexFlags: '',
+    regexReplacement: 'Renamed_',
+  });
+
+  assert.equal(preview.previewItems.length, 1);
+  assert.equal(preview.changedCount, 1);
+  assert.equal(preview.previewItems[0].newFileName, 'Renamed_file_name.pdf');
+  assert.equal(preview.previewItems[0].isChanged, true);
+});
+
+test('calculateQueueProgress accurately computes completion percentage and status counts', () => {
+  // 1. Empty queue returns 0% without NaN errors
+  const emptyProgress = calculateQueueProgress([]);
+  assert.equal(emptyProgress.totalCount, 0);
+  assert.equal(emptyProgress.completedCount, 0);
+  assert.equal(emptyProgress.percentage, 0);
+  assert.equal(emptyProgress.verifiedPdfCount, 0);
+
+  // 2. Mixed tasks
+  const tasks = [
+    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
+    { status: 'HTML_INDEX_EXTRACTED', pdfVerified: false },
+    { status: 'QUEUED', pdfVerified: false },
+    { status: 'FAILED_RETRY', pdfVerified: false },
+  ];
+  const progress = calculateQueueProgress(tasks);
+  assert.equal(progress.totalCount, 4);
+  assert.equal(progress.completedCount, 2); // 2 of 4 = 50%
+  assert.equal(progress.percentage, 50);
+  assert.equal(progress.queuedCount, 1);
+  assert.equal(progress.failedCount, 1);
+  assert.equal(progress.verifiedPdfCount, 1);
+
+  // 3. Rounding test (1 out of 3 = 33%)
+  const oneOfThree = calculateQueueProgress([
+    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
+    { status: 'QUEUED', pdfVerified: false },
+    { status: 'QUEUED', pdfVerified: false },
+  ]);
+  assert.equal(oneOfThree.totalCount, 3);
+  assert.equal(oneOfThree.completedCount, 1);
+  assert.equal(oneOfThree.percentage, 33);
+
+  // 4. 100% completion
+  const allComplete = calculateQueueProgress([
+    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
+    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
+    { status: 'HTML_INDEX_EXTRACTED', pdfVerified: false },
+  ]);
+  assert.equal(allComplete.totalCount, 3);
+  assert.equal(allComplete.completedCount, 3);
+  assert.equal(allComplete.percentage, 100);
+  assert.equal(allComplete.verifiedPdfCount, 2);
+});
+
 
 
 

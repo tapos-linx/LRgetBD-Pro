@@ -42,17 +42,20 @@ import {
   clearAllVerifiedPdfBlobs,
   clearExtractedKhatianRecords,
   getAllExtractedKhatianRecords,
+  getAllVerifiedPdfBlobs,
   loadPersistedQueue,
   loadProxyConfig,
   saveExtractedKhatianRecords,
   savePersistedQueue,
   saveProxyConfig,
+  batchUpdateVerifiedBlobFileNames,
 } from './services/storageService';
 import {
   buildQueueTasksForUpazila,
   buildUnifiedQueueForDocumentSelection,
   buildVerifiedArchiveZip,
   calculatePoliteJitterDelay,
+  calculateQueueProgress,
   generateManifestAuditCsv,
   processSingleQueueTask,
   resetAllTasksToQueued,
@@ -64,6 +67,8 @@ import {
   triggerZipDownload,
 } from './services/downloadAndZipService';
 import { ApkInstallerModal } from './components/ApkInstallerModal';
+import { BatchRenameModal } from './components/BatchRenameModal';
+import { GlobalProgressBar } from './components/GlobalProgressBar';
 import { QueueConsoleView } from './components/QueueConsoleView';
 import { TabularIndexView } from './components/TabularIndexView';
 import { ArchitectureDocsView } from './components/ArchitectureDocsView';
@@ -74,6 +79,10 @@ export default function App() {
   // Navigation & Modal State
   const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('extractor');
   const [apkModalOpen, setApkModalOpen] = useState(false);
+  const [batchRenameModalOpen, setBatchRenameModalOpen] = useState(false);
+  const [verifiedBlobTaskIds, setVerifiedBlobTaskIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   // Geographic Cascading State (Defaults to Chittagong -> Brahmanbaria -> Nabinagar)
   const [divisionId, setDivisionId] = useState<string>(GEO_HIERARCHY[0].id);
@@ -447,9 +456,12 @@ export default function App() {
     );
   };
 
-  // Load IndexedDB records & check portal health on mount
+  // Load IndexedDB records, blobs & check portal health on mount
   useEffect(() => {
     getAllExtractedKhatianRecords().then(setTabularRecords);
+    getAllVerifiedPdfBlobs().then((blobs) => {
+      setVerifiedBlobTaskIds(new Set(blobs.map((b) => b.taskId)));
+    });
     checkEporchaPortalHealth().then((res) => {
       setPortalHealth({
         reachable: res.reachable,
@@ -460,9 +472,12 @@ export default function App() {
     });
   }, []);
 
-  // Persist Queue whenever tasks change
+  // Persist Queue & refresh verified blob IDs whenever tasks change
   useEffect(() => {
     savePersistedQueue(tasks);
+    getAllVerifiedPdfBlobs().then((blobs) => {
+      setVerifiedBlobTaskIds(new Set(blobs.map((b) => b.taskId)));
+    });
   }, [tasks]);
 
   // Update Proxy Config
@@ -748,6 +763,27 @@ export default function App() {
     }
   };
 
+  const handleApplyBatchRename = async (renameMap: Map<string, string>) => {
+    const { updatedCount } = await batchUpdateVerifiedBlobFileNames(renameMap);
+    const updatedTasks = tasks.map((t) => {
+      if (renameMap.has(t.id)) {
+        return {
+          ...t,
+          fileName: renameMap.get(t.id)!,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return t;
+    });
+    setTasks(updatedTasks);
+    savePersistedQueue(updatedTasks);
+    setEnqueueFeedback(
+      `Batch renamed ${renameMap.size} records (${updatedCount} updated in 'lr_verified_blobs' IndexedDB store).`
+    );
+    const refreshedBlobs = await getAllVerifiedPdfBlobs();
+    setVerifiedBlobTaskIds(new Set(refreshedBlobs.map((b) => b.taskId)));
+  };
+
   const handleClearQueue = async () => {
     setIsQueueRunning(false);
     setTasks([]);
@@ -801,12 +837,10 @@ export default function App() {
     setTabularRecords([]);
   };
 
-  const queuedCount = tasks.filter((t) => t.status === 'QUEUED').length;
-  const completedOrExtractedCount = tasks.filter(
-    (t) =>
-      t.status === 'CACHED_INDEXEDDB' || t.status === 'HTML_INDEX_EXTRACTED'
-  ).length;
-  const verifiedPdfCount = tasks.filter((t) => t.pdfVerified).length;
+  const queueMetrics = useMemo(() => calculateQueueProgress(tasks), [tasks]);
+  const queuedCount = queueMetrics.queuedCount;
+  const completedOrExtractedCount = queueMetrics.completedCount;
+  const verifiedPdfCount = queueMetrics.verifiedPdfCount;
   const nativeCapActive = isCapacitorNativeRuntime();
   const allDocsSelected =
     selectedEndpoints.length === ALL_ENDPOINT_TYPES.length &&
@@ -814,67 +848,79 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Bar Contract: Strictly 3 Zones */}
-      <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800 px-3 sm:px-8 py-3 flex items-center justify-between gap-2 sm:gap-8">
-        {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#top"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('extractor');
-          }}
-          className="text-sm sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
-        >
-          LRgetBD v2.1 · LandArchive BD
-        </a>
-
-        {/* Zone 2: 4 concise single-line navigation links with subtle transition effect */}
-        <nav
-          aria-label="Primary Workspace Navigation"
-          className="hidden md:flex items-center gap-1.5 p-1 bg-slate-900/60 rounded-xl border border-slate-800/80 backdrop-blur-sm"
-        >
-          {[
-            { id: 'extractor', label: 'Extractor' },
-            { id: 'queue', label: `Live Queue (${tasks.length})` },
-            { id: 'index', label: `Tabular Index (${tabularRecords.length})` },
-            { id: 'docs', label: '6-Doc Architecture' },
-          ].map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id as ActiveWorkspaceTab)}
-                className={`relative px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 ease-out whitespace-nowrap shrink-0 flex items-center gap-2 select-none ${
-                  isActive
-                    ? 'text-white bg-slate-800/95 border border-slate-700/80 shadow-sm shadow-emerald-950/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent'
-                }`}
-              >
-                <span className="relative z-10">{tab.label}</span>
-                {isActive && (
-                  <span
-                    className="absolute inset-x-3 -bottom-[1px] h-[2px] bg-emerald-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_8px_rgba(52,211,153,0.6)]"
-                    aria-hidden="true"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center shrink-0">
-          <button
-            type="button"
-            onClick={() => setApkModalOpen(true)}
-            className="px-3 py-2 sm:px-4 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+      {/* Sticky Header & Global Queue Progress Bar Container */}
+      <div className="sticky top-0 z-30 bg-slate-950/95 backdrop-blur-md border-b border-slate-800 shadow-sm">
+        {/* Top Bar Contract: Strictly 3 Zones */}
+        <header className="px-3 sm:px-8 py-3 flex items-center justify-between gap-2 sm:gap-8">
+          {/* Zone 1: Single text element wordmark */}
+          <a
+            href="#top"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('extractor');
+            }}
+            className="text-sm sm:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
           >
-            <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-            <span>Download Android APK</span>
-          </button>
-        </div>
-      </header>
+            LRgetBD v2.1 · LandArchive BD
+          </a>
+
+          {/* Zone 2: 4 concise single-line navigation links with subtle transition effect */}
+          <nav
+            aria-label="Primary Workspace Navigation"
+            className="hidden md:flex items-center gap-1.5 p-1 bg-slate-900/60 rounded-xl border border-slate-800/80 backdrop-blur-sm"
+          >
+            {[
+              { id: 'extractor', label: 'Extractor' },
+              { id: 'queue', label: `Live Queue (${tasks.length})` },
+              { id: 'index', label: `Tabular Index (${tabularRecords.length})` },
+              { id: 'docs', label: '6-Doc Architecture' },
+            ].map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id as ActiveWorkspaceTab)}
+                  className={`relative px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 ease-out whitespace-nowrap shrink-0 flex items-center gap-2 select-none ${
+                    isActive
+                      ? 'text-white bg-slate-800/95 border border-slate-700/80 shadow-sm shadow-emerald-950/30'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent'
+                  }`}
+                >
+                  <span className="relative z-10">{tab.label}</span>
+                  {isActive && (
+                    <span
+                      className="absolute inset-x-3 -bottom-[1px] h-[2px] bg-emerald-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Zone 3: 1 primary action */}
+          <div className="flex items-center shrink-0">
+            <button
+              type="button"
+              onClick={() => setApkModalOpen(true)}
+              className="px-3 py-2 sm:px-4 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+            >
+              <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+              <span>Download Android APK</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Global Task Completion Progress Bar Strip */}
+        <GlobalProgressBar
+          metrics={queueMetrics}
+          isQueueRunning={isQueueRunning}
+          activeTab={activeTab}
+          onViewQueue={() => setActiveTab('queue')}
+          onToggleQueue={() => setIsQueueRunning((prev) => !prev)}
+        />
+      </div>
 
       {/* Mobile Navigation Bar (Visible on mobile/tablet) with subtle transitions */}
       <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5 gap-1">
@@ -1725,6 +1771,7 @@ export default function App() {
               onBundleZip={handleBundleZip}
               onExportCsv={handleExportAuditCsv}
               onDownloadIndividual={handleDownloadIndividualTask}
+              onOpenBatchRenameModal={() => setBatchRenameModalOpen(true)}
               isBundlingZip={isBundlingZip}
               lastBundleStatus={lastBundleStatus}
             />
@@ -1772,6 +1819,15 @@ export default function App() {
       <ApkInstallerModal
         isOpen={apkModalOpen}
         onClose={() => setApkModalOpen(false)}
+      />
+
+      {/* Batch Rename Modal for lr_verified_blobs & Queue */}
+      <BatchRenameModal
+        isOpen={batchRenameModalOpen}
+        onClose={() => setBatchRenameModalOpen(false)}
+        tasks={tasks}
+        verifiedBlobTaskIds={verifiedBlobTaskIds}
+        onApplyRename={handleApplyBatchRename}
       />
     </div>
   );

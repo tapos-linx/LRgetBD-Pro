@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Download,
   ExternalLink,
+  FileEdit,
   FileSpreadsheet,
   Pause,
   Play,
@@ -29,6 +30,7 @@ interface QueueConsoleViewProps {
   onBundleZip: () => Promise<void>;
   onExportCsv: () => void;
   onDownloadIndividual?: (task: QueueTask) => void;
+  onOpenBatchRenameModal?: () => void;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
 }
@@ -55,6 +57,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   onBundleZip,
   onExportCsv,
   onDownloadIndividual,
+  onOpenBatchRenameModal,
   isBundlingZip,
   lastBundleStatus,
 }) => {
@@ -137,11 +140,24 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               type="button"
               onClick={onExportCsv}
               disabled={tasks.length === 0}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Export MANIFEST_AUDIT.csv</span>
+              <span>Export CSV</span>
             </button>
+
+            {onOpenBatchRenameModal && (
+              <button
+                type="button"
+                onClick={onOpenBatchRenameModal}
+                disabled={tasks.length === 0}
+                title="Apply a regex-based or token template naming pattern to downloaded PDFs in lr_verified_blobs"
+                className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <FileEdit className="w-3.5 h-3.5 text-amber-400" />
+                <span>Batch Rename ({verifiedCount})</span>
+              </button>
+            )}
 
             <button
               type="button"
