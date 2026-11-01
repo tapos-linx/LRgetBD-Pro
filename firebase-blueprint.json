@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with preference settings and cloud sync timestamps.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase user ID matching auth.uid" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "photoUrl": { "type": "string", "description": "User avatar image URL" },
+        "driveConnected": { "type": "boolean", "description": "Whether Google Drive access has been authorized" },
+        "driveFolderId": { "type": "string", "description": "Google Drive folder ID for LRgetBD archives" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last profile update" }
+      },
+      "required": ["uid", "email"]
+    },
+    "CloudKhatianRecord": {
+      "title": "CloudKhatianRecord",
+      "description": "Extracted land record metadata synchronized to cloud Firestore storage.",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "description": "Unique khatian record identifier" },
+        "userId": { "type": "string", "description": "Owner user ID matching auth.uid" },
+        "districtName": { "type": "string", "description": "District name" },
+        "upazilaName": { "type": "string", "description": "Upazila name" },
+        "unionName": { "type": "string", "description": "Union name" },
+        "mouzaNameEn": { "type": "string", "description": "Mouza name in English" },
+        "mouzaNameBn": { "type": "string", "description": "Mouza name in Bengali" },
+        "mouzaJlNo": { "type": "string", "description": "Mouza JL number" },
+        "surveyType": { "type": "string", "description": "Survey type (CS/SA/RS/BS/MUTATION)" },
+        "khatianNo": { "type": "string", "description": "Khatian number" },
+        "ownerName": { "type": "string", "description": "Record holder or owner name" },
+        "dagNo": { "type": "string", "description": "Plot or dag numbers" },
+        "totalLandAcres": { "type": "string", "description": "Total land area in acres" },
+        "sourceUrl": { "type": "string", "description": "eporcha.tech source URL" },
+        "syncedAt": { "type": "string", "description": "ISO timestamp of sync" }
+      },
+      "required": ["recordId", "userId", "districtName", "upazilaName", "mouzaJlNo", "surveyType", "khatianNo"]
+    },
+    "DriveArchiveBundle": {
+      "title": "DriveArchiveBundle",
+      "description": "Metadata for ZIP record archives uploaded to Google Drive.",
+      "type": "object",
+      "properties": {
+        "archiveId": { "type": "string", "description": "Unique bundle ID" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "driveFileId": { "type": "string", "description": "Google Drive file ID" },
+        "driveFileName": { "type": "string", "description": "Filename on Google Drive" },
+        "driveViewLink": { "type": "string", "description": "Google Drive web view link" },
+        "verifiedPdfCount": { "type": "number", "description": "Count of verified PDFs in archive" },
+        "sizeBytes": { "type": "number", "description": "Archive file size in bytes" },
+        "uploadedAt": { "type": "string", "description": "ISO timestamp of upload" }
+      },
+      "required": ["archiveId", "userId", "driveFileId", "driveFileName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles and Drive sync configurations"
+    },
+    "/users/{userId}/records/{recordId}": {
+      "schema": { "$ref": "#/entities/CloudKhatianRecord" },
+      "description": "Extracted land records per user"
+    },
+    "/users/{userId}/archives/{archiveId}": {
+      "schema": { "$ref": "#/entities/DriveArchiveBundle" },
+      "description": "Google Drive archive uploads per user"
+    }
+  }
+}

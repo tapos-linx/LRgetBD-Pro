@@ -3,6 +3,7 @@ import {
   Archive,
   CheckCircle2,
   CheckSquare,
+  Cloud,
   Download,
   ExternalLink,
   Filter,
@@ -17,6 +18,8 @@ import {
   Smartphone,
   Square,
 } from 'lucide-react';
+import type { User } from 'firebase/auth';
+import { initAuth } from './services/firebaseClient';
 import {
   BookStyleConfig,
   EporchaEndpointType,
@@ -68,6 +71,7 @@ import {
 } from './services/downloadAndZipService';
 import { ApkInstallerModal } from './components/ApkInstallerModal';
 import { BatchRenameModal } from './components/BatchRenameModal';
+import { GoogleDriveSyncModal } from './components/GoogleDriveSyncModal';
 import { GlobalProgressBar } from './components/GlobalProgressBar';
 import { QueueConsoleView } from './components/QueueConsoleView';
 import { TabularIndexView } from './components/TabularIndexView';
@@ -80,6 +84,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('extractor');
   const [apkModalOpen, setApkModalOpen] = useState(false);
   const [batchRenameModalOpen, setBatchRenameModalOpen] = useState(false);
+  const [driveModalOpen, setDriveModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [verifiedBlobTaskIds, setVerifiedBlobTaskIds] = useState<Set<string>>(
     () => new Set()
   );
@@ -837,6 +843,15 @@ export default function App() {
     setTabularRecords([]);
   };
 
+  useEffect(() => {
+    const unsubscribe = initAuth((user) => {
+      setCurrentUser(user);
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
   const queueMetrics = useMemo(() => calculateQueueProgress(tasks), [tasks]);
   const queuedCount = queueMetrics.queuedCount;
   const completedOrExtractedCount = queueMetrics.completedCount;
@@ -899,15 +914,29 @@ export default function App() {
             })}
           </nav>
 
-          {/* Zone 3: 1 primary action */}
-          <div className="flex items-center shrink-0">
+          {/* Zone 3: Actions */}
+          <div className="flex items-center shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setDriveModalOpen(true)}
+              className="px-2.5 py-2 sm:px-3 text-xs font-semibold text-slate-200 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+            >
+              <Cloud className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 shrink-0" />
+              <span className="hidden sm:inline">Google Drive & Cloud</span>
+              <span className="sm:hidden">Drive</span>
+              {currentUser && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => setApkModalOpen(true)}
               className="px-3 py-2 sm:px-4 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-lg transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
             >
               <Smartphone className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-              <span>Download Android APK</span>
+              <span className="hidden xs:inline">Download</span>
+              <span>APK</span>
             </button>
           </div>
         </header>
@@ -1828,6 +1857,19 @@ export default function App() {
         tasks={tasks}
         verifiedBlobTaskIds={verifiedBlobTaskIds}
         onApplyRename={handleApplyBatchRename}
+      />
+
+      {/* Google Drive & Cloud Storage Sync Modal */}
+      <GoogleDriveSyncModal
+        isOpen={driveModalOpen}
+        onClose={() => setDriveModalOpen(false)}
+        currentUser={currentUser}
+        onUserChange={setCurrentUser}
+        tasks={tasks}
+        localRecords={tabularRecords}
+        onImportCloudRecords={(cloudRecords) => {
+          handleImportRecords(cloudRecords);
+        }}
       />
     </div>
   );

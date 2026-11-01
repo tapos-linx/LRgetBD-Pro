@@ -1,0 +1,96 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.:]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'email'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoUrl', 'driveConnected', 'driveFolderId', 'updatedAt'])
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() > 3
+        && data.email.size() <= 256;
+    }
+
+    function isValidRecord(data, userId) {
+      return data.keys().hasAll(['recordId', 'userId', 'districtName', 'upazilaName', 'mouzaJlNo', 'surveyType', 'khatianNo'])
+        && data.keys().hasOnly([
+          'recordId', 'userId', 'districtName', 'upazilaName', 'unionName',
+          'mouzaNameEn', 'mouzaNameBn', 'mouzaJlNo', 'surveyType', 'khatianNo',
+          'ownerName', 'dagNo', 'totalLandAcres', 'sourceUrl', 'syncedAt'
+        ])
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.recordId is string && data.recordId.size() <= 128
+        && data.districtName is string && data.districtName.size() <= 100
+        && data.upazilaName is string && data.upazilaName.size() <= 100
+        && data.mouzaJlNo is string && data.mouzaJlNo.size() <= 50
+        && data.surveyType is string && data.surveyType.size() <= 30
+        && data.khatianNo is string && data.khatianNo.size() <= 100;
+    }
+
+    function isValidDriveArchive(data, userId) {
+      return data.keys().hasAll(['archiveId', 'userId', 'driveFileId', 'driveFileName'])
+        && data.keys().hasOnly([
+          'archiveId', 'userId', 'driveFileId', 'driveFileName',
+          'driveViewLink', 'verifiedPdfCount', 'sizeBytes', 'uploadedAt'
+        ])
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.archiveId is string && data.archiveId.size() <= 128
+        && data.driveFileId is string && data.driveFileId.size() <= 256
+        && data.driveFileName is string && data.driveFileName.size() <= 256;
+    }
+
+    // User Profile & Settings
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false; // Deny user enumeration
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming(), userId);
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming(), userId)
+        && incoming().uid == userId;
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Sub-collection: Extracted Land Records
+      match /records/{recordId} {
+        allow get: if isOwner(userId) && isValidId(recordId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(recordId) && isValidRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(recordId) && isValidRecord(incoming(), userId)
+          && incoming().userId == userId;
+        allow delete: if isOwner(userId) && isValidId(recordId);
+      }
+
+      // Sub-collection: Google Drive Archive Bundles
+      match /archives/{archiveId} {
+        allow get: if isOwner(userId) && isValidId(archiveId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(archiveId) && isValidDriveArchive(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(archiveId) && isValidDriveArchive(incoming(), userId)
+          && incoming().userId == userId;
+        allow delete: if isOwner(userId) && isValidId(archiveId);
+      }
+    }
+  }
+}
