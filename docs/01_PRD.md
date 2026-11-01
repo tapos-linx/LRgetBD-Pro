@@ -1,7 +1,7 @@
 # 01_PRD.md — Product Requirements Document (SKILL.md Equivalent)
 **Project:** LRgetBD Pro (LR Mass Downloader / LandArchive BD v2.1 — `eporcha.tech` Open-Access Edition)  
 **Target Portal:** `https://eporcha.tech` (Zero-Login, Open-Access Endpoints)  
-**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (`bd.landarchive.lrgetbdpro` · `tapos-linx/LRgetBD-Pro`)
+**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (`bd.landarchive.lrgetbdpro` · `tapos-linx/LR_Mass_Downloader`)
 
 ---
 

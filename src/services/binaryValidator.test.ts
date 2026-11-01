@@ -193,26 +193,26 @@ test('buildQueueTasksForUpazila selects 100% of available Mouzas and builds task
   assert.ok(result.tasks.every((t) => t.upazilaNameEn === 'Kasba'));
 });
 
-test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspector', async () => {
+test('verifies official LR_Mass_Downloader repoConfig coordinates and APK release inspector', async () => {
   const { REPO_CONFIG, buildRepoEndpoints } = await import('../config/repoConfig');
   const { inspectGithubReleasePayload } = await import('./apkReleaseService');
 
   assert.equal(REPO_CONFIG.owner, 'tapos-linx');
-  assert.equal(REPO_CONFIG.repo, 'LRgetBD-Pro');
-  assert.equal(REPO_CONFIG.fullSlug, 'tapos-linx/LRgetBD-Pro');
+  assert.equal(REPO_CONFIG.repo, 'LR_Mass_Downloader');
+  assert.equal(REPO_CONFIG.fullSlug, 'tapos-linx/LR_Mass_Downloader');
   assert.equal(REPO_CONFIG.appName, 'LRgetBD Pro');
   assert.equal(REPO_CONFIG.appId, 'bd.landarchive.lrgetbdpro');
   assert.equal(REPO_CONFIG.standardApkFilename, 'LRgetBD-Pro.apk');
   assert.equal(
     REPO_CONFIG.releasesApiEndpoint,
-    'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest'
+    'https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest'
   );
   assert.equal(
     REPO_CONFIG.directFallbackAssetUrl,
-    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk'
+    'https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk'
   );
 
-  const pending404 = inspectGithubReleasePayload(404, null, 'tapos-linx/LRgetBD-Pro');
+  const pending404 = inspectGithubReleasePayload(404, null, 'tapos-linx/LR_Mass_Downloader');
   assert.equal(pending404.status, 'FIRST_BUILD_PENDING');
   assert.equal(pending404.verified, false);
 
@@ -225,11 +225,11 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
           name: 'LRgetBD-Pro.apk',
           size: 50000, // < 1MB should be rejected!
           browser_download_url:
-            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.1/LRgetBD-Pro.apk',
+            'https://github.com/tapos-linx/LR_Mass_Downloader/releases/download/v1.0.1/LRgetBD-Pro.apk',
         },
       ],
     },
-    'tapos-linx/LRgetBD-Pro'
+    'tapos-linx/LR_Mass_Downloader'
   );
   assert.equal(corruptSmallApk.verified, false);
   assert.equal(corruptSmallApk.status, 'ASSET_MISSING_OR_INVALID');
@@ -245,11 +245,11 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
           size: 4500000,
           download_count: 14,
           browser_download_url:
-            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.12/LRgetBD-Pro.apk',
+            'https://github.com/tapos-linx/LR_Mass_Downloader/releases/download/v1.0.12/LRgetBD-Pro.apk',
         },
       ],
     },
-    'tapos-linx/LRgetBD-Pro'
+    'tapos-linx/LR_Mass_Downloader'
   );
   assert.equal(validApk.verified, true);
   assert.equal(validApk.status, 'VERIFIED_READY');

@@ -20,7 +20,7 @@ export const ARCHITECTURE_DOCS: ArchitectureDocItem[] = [
     markdown: `# 01_PRD.md — Product Requirements Document (SKILL.md Equivalent)
 **Project:** LRgetBD Pro (LR Mass Downloader / LandArchive BD v2.1 — \`eporcha.tech\` Open-Access Edition)  
 **Target Portal:** \`https://eporcha.tech\` (Zero-Login, Open-Access Endpoints)  
-**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (\`bd.landarchive.lrgetbdpro\` · \`tapos-linx/LRgetBD-Pro\`)
+**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (\`bd.landarchive.lrgetbdpro\` · \`tapos-linx/LR_Mass_Downloader\`)
 
 ## 1. Core Objective
 Provide a 100% free, zero-payment, zero-hallucination bulk extraction, binary verification (\`%PDF-\`), and archival engine powered exclusively by **\`https://eporcha.tech\`** for Bangladesh land records. Do NOT use paid or login-walled portals (\`dlrms.land.gov.bd\` or \`eporcha.gov.bd\`).
@@ -87,7 +87,7 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
     titleEn: '04. Technical Requirements & Data Contracts',
     titleBn: '০৪. টেকনিক্যাল রিকোয়ারমেন্টস ও ডাটা কন্ট্রাক্টস',
     summary:
-      'Dual-transport fetcher (CapacitorHttp + Express/Termux/Cloudflare proxy), %PDF- binary magic-byte gate, and polite 600–1200ms queue engine.',
+      'Dual-transport fetcher (CapacitorHttp + Express/Termux/Cloudflare proxy), %PDF- binary magic-byte gate, and polite 450–900ms queue engine.',
     markdown: `# 04_TRD.md — Technical Requirements & Data Contracts (API_SPEC.md Equivalent)
 
 ## 1. Dual-Transport Fetcher (\`src/services/eporchaTechClient.ts\`)
@@ -99,14 +99,14 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 - Parses HTML/JSON Khatian & Dag tables from \`eporcha.tech\` responses into structured \`KhatianRecord\` rows.
 
 ## 3. Polite Anti-Crash Sequential Queue (\`src/services/queueEngine.ts\`)
-- Concurrency limited to \`1–2\` parallel requests with \`600ms–1200ms\` polite delay jitter.
+- Concurrency limited to \`1–3\` parallel requests with \`450ms–900ms\` polite delay jitter.
 - Streams verified PDF blobs directly to \`IndexedDB\` (\`lr_eporcha_blobs_v2\`).
 
 ## 4. Official GitHub Release Coordinates (\`src/config/repoConfig.ts\`)
-- **Repository:** \`tapos-linx/LRgetBD-Pro\`
+- **Repository:** \`tapos-linx/LR_Mass_Downloader\`
 - **Android Package ID:** \`bd.landarchive.lrgetbdpro\` (\`LRgetBD Pro\`)
-- **Standard Release APK:** \`LRgetBD-Pro.apk\` (\`https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk\`)
-- **Releases API:** \`https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest\``,
+- **Standard Release APK:** \`LRgetBD-Pro.apk\` (\`https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk\`)
+- **Releases API:** \`https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest\``,
   },
   {
     id: 'doc-05-schema',
@@ -142,6 +142,6 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 - **Phase 1:** Generate all 6 \`/docs/*.md\` files, strict TypeScript models (\`src/types/land.ts\`), and the Brahmanbaria/Cumilla dataset (\`src/data/geoHierarchy.ts\`).
 - **Phase 2:** Implement \`src/services/eporchaTechClient.ts\` (dual Capacitor Native HTTP + Web/Server Proxy transport for all 5 \`eporcha.tech\` endpoints) and \`src/services/binaryValidator.ts\` (\`%PDF-\` magic-byte verifier).
 - **Phase 3:** Build the Sequential Queue Engine, \`IndexedDB\` storage service, \`JSZip\` bundler, and Material Design 3 Bilingual UI.
-- **Phase 4:** Configure \`capacitor.config.json\` (\`bd.landarchive.lrgetbdpro\`, \`CapacitorHttp.enabled = true\`) and \`.github/workflows/build-apk.yml\` for automated GitHub Releases APK publishing (\`tapos-linx/LRgetBD-Pro\` -> \`LRgetBD-Pro.apk\`).`,
+- **Phase 4:** Configure \`capacitor.config.json\` (\`bd.landarchive.lrgetbdpro\`, \`CapacitorHttp.enabled = true\`) and \`.github/workflows/build-apk.yml\` for automated GitHub Releases APK publishing (\`tapos-linx/LR_Mass_Downloader\` -> \`LRgetBD-Pro.apk\`).`,
   },
 ];

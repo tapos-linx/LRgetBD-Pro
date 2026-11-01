@@ -65,7 +65,9 @@ export type TaskStatus =
   | 'HTML_INDEX_EXTRACTED'
   | 'CORS_BRIDGE_REQUIRED'
   | 'NOT_AVAILABLE_ON_EPORCHA_TECH'
-  | 'FAILED_RETRY';
+  | 'FAILED_RETRY'
+  | 'PAUSED'
+  | 'CANCELLED';
 
 export type TransportMode =
   | 'CAPACITOR_NATIVE_HTTP'
@@ -151,7 +153,7 @@ export interface ProxyConfig {
   preferredMode: TransportMode;
   termuxProxyUrl: string;
   customCloudflareProxyUrl: string;
-  concurrency: 1 | 2;
+  concurrency: 1 | 2 | 3;
   minDelayMs: number;
   maxDelayMs: number;
 }

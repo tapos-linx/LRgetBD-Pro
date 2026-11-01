@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Archive,
   CheckCircle2,
+  Download,
   ExternalLink,
   FileSpreadsheet,
   Pause,
@@ -27,6 +28,7 @@ interface QueueConsoleViewProps {
   onClearQueue: () => void;
   onBundleZip: () => Promise<void>;
   onExportCsv: () => void;
+  onDownloadIndividual?: (task: QueueTask) => void;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
 }
@@ -52,6 +54,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   onClearQueue,
   onBundleZip,
   onExportCsv,
+  onDownloadIndividual,
   isBundlingZip,
   lastBundleStatus,
 }) => {
@@ -93,7 +96,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               Live Sequential Queue & Binary Verification Console
             </h2>
             <p className="text-xs text-slate-400 font-bn mt-0.5">
-              Polite anti-crash queue (600ms–1200ms jitter) · Strict %PDF- (25 50 44 46 2D) &gt; 1,024B verification gate
+              Polite anti-crash queue (450ms–900ms jitter) · Strict %PDF- (25 50 44 46 2D) &gt; 1,024B verification gate
             </p>
           </div>
 
@@ -103,7 +106,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                 type="button"
                 onClick={onStartQueue}
                 disabled={queuedCount === 0}
-                className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0"
+                className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Play className="w-4 h-4" />
                 <span>Start Queue ({queuedCount} Queued)</span>
@@ -112,7 +115,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               <button
                 type="button"
                 onClick={onPauseQueue}
-                className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0"
+                className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Pause className="w-4 h-4" />
                 <span>Pause Queue</span>
@@ -123,10 +126,11 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               type="button"
               onClick={onRetryFailed}
               disabled={failedOrBlockedCount === 0 || isRunning}
-              className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+              title="Iterates through all FAILED_RETRY, CORS_BRIDGE_REQUIRED, and NOT_AVAILABLE tasks and resets them to QUEUED with incremented retry count"
+              className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Re-Queue Non-PDF ({failedOrBlockedCount})</span>
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+              <span>Retry All Failed Tasks ({failedOrBlockedCount})</span>
             </button>
 
             <button
@@ -257,13 +261,14 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               onChange={(e) =>
                 onUpdateProxyConfig({
                   ...proxyConfig,
-                  concurrency: Number(e.target.value) as 1 | 2,
+                  concurrency: Number(e.target.value) as 1 | 2 | 3,
                 })
               }
               className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
             >
-              <option value={1}>1 Parallel Request · 600ms–1200ms Jitter (Safest)</option>
-              <option value={2}>2 Parallel Requests · 600ms–1200ms Jitter</option>
+              <option value={1}>1 Parallel Request · 450ms–900ms Jitter (Safest)</option>
+              <option value={2}>2 Parallel Requests · 450ms–900ms Jitter (Balanced)</option>
+              <option value={3}>3 Parallel Requests · 450ms–900ms Jitter (Maximum)</option>
             </select>
           </div>
         </div>
@@ -405,12 +410,23 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 align-top text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {onDownloadIndividual && (task.pdfVerified || (task.byteLength && task.byteLength > 0)) && (
+                            <button
+                              type="button"
+                              onClick={() => onDownloadIndividual(task)}
+                              title={`Download individual ${task.fileName}`}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-700/80 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <Download className="w-3 h-3" />
+                              <span>Download</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => onRunSingleTask(task.id)}
                             disabled={isCurrentlyFetching}
-                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0"
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                           >
                             {task.status === 'QUEUED' ? 'Fetch Now' : 'Re-Verify'}
                           </button>

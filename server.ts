@@ -50,11 +50,11 @@ async function startServer() {
     }
   });
 
-  // Live GitHub Releases Check for tapos-linx/LRgetBD-Pro (with optional ?repo=owner/repo override)
+  // Live GitHub Releases Check for tapos-linx/LR_Mass_Downloader (with optional ?repo=owner/repo override)
   app.get('/api/github-release-check', async (req, res) => {
     const requestedRepo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
     const isValidSlug = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(requestedRepo);
-    const repo = isValidSlug ? requestedRepo : 'tapos-linx/LRgetBD-Pro';
+    const repo = isValidSlug ? requestedRepo : 'tapos-linx/LR_Mass_Downloader';
     try {
       const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
         headers: {

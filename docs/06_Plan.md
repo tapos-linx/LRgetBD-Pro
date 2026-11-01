@@ -1,12 +1,12 @@
 # 06_Plan.md — 4-Phase Implementation & Verification Plan (ROADMAP.md Equivalent)
 **Project:** LRgetBD Pro (LandArchive BD v2.1)  
-**Official Repository:** `tapos-linx/LRgetBD-Pro` (`bd.landarchive.lrgetbdpro`)
+**Official Repository:** `tapos-linx/LR_Mass_Downloader` (`bd.landarchive.lrgetbdpro`)
 
 ---
 
 ## Phase 1: Foundation, Contracts & Geographic Hierarchy
 - [x] Establish the 6-Document Architecture Framework (`/docs/01_PRD.md` through `/docs/06_Plan.md`).
-- [x] Define strict TypeScript contracts in `src/types/land.ts` and single-source repository coordinates in `src/config/repoConfig.ts` (`tapos-linx/LRgetBD-Pro`, `bd.landarchive.lrgetbdpro`, `LRgetBD-Pro.apk`).
+- [x] Define strict TypeScript contracts in `src/types/land.ts` and single-source repository coordinates in `src/config/repoConfig.ts` (`tapos-linx/LR_Mass_Downloader`, `bd.landarchive.lrgetbdpro`, `LRgetBD-Pro.apk`).
 - [x] Populate the authoritative **Brahmanbaria District** (all 9 Upazilas, prioritizing **Nabinagar Upazila** and **20-No Kaitala South Union** — `Goalai / গোয়ালী` JL-114, `Kaitala / কাইতলা` JL-115, etc.) and **Cumilla District** dataset in `src/data/geoHierarchy.ts`.
 
 ## Phase 2: Dual-Transport Client & Binary Verification Gate
@@ -18,10 +18,10 @@
 
 ## Phase 3: Polite Queue Engine, IndexedDB Streaming & MD3 Bilingual UI
 - [x] Implement `src/services/storageService.ts` for `IndexedDB` (`lr_eporcha_blobs_v2` & `lr_eporcha_records_v2`) and `localStorage` queue persistence.
-- [x] Implement `src/services/queueEngine.ts` (`buildQueueTasksForUpazila` & `buildUnifiedQueueForDocumentSelection`) with `600ms–1200ms` polite delay jitter and `JSZip` archive bundling (`MANIFEST_AUDIT.csv` + `MANIFEST_AUDIT.md`).
+- [x] Implement `src/services/queueEngine.ts` and `src/services/downloadAndZipService.ts` with `450ms–900ms` polite delay jitter, Retry Failed Tasks, and `JSZip` directory bundling (`[District]/[Upazila]/[Survey]/[Filename]` + `MANIFEST_AUDIT.csv` + `MANIFEST_AUDIT.md`).
 - [x] Build the Material Design 3 Bilingual (Bengali/English) interface with 100% Mouza auto-selection, `Select / Deselect All` toggle switch, and automatic queue generation on Upazila pick.
 
 ## Phase 4: Capacitor 6 Native Config & Self-Healing GitHub Actions APK Pipeline
 - [x] Configure `capacitor.config.json` with `"appId": "bd.landarchive.lrgetbdpro"`, `"appName": "LRgetBD Pro"`, and `"CapacitorHttp": { "enabled": true }`.
-- [x] Configure `.github/workflows/build-apk.yml` to scaffold `/android`, compile the debug APK, verify size `> 1048576` bytes (`> 1 MB`), and publish `LRgetBD-Pro.apk` to GitHub Releases (`https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk`).
-- [x] Implement `src/services/apkReleaseService.ts` and `src/components/ApkInstallerModal.tsx` querying `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest` with dynamic repo switching and graceful First Build Pending status.
+- [x] Configure `.github/workflows/build-apk.yml` to scaffold `/android`, compile the debug APK, verify size `> 1048576` bytes (`> 1 MB`), and publish `LRgetBD-Pro.apk` to GitHub Releases (`https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk`).
+- [x] Implement `src/services/apkReleaseService.ts` and `src/components/ApkInstallerModal.tsx` querying `https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest` with dynamic repo switching and graceful First Build Pending status.

@@ -1,6 +1,6 @@
 # 04_TRD.md — Technical Requirements & Data Contracts (API_SPEC.md Equivalent)
 **Project:** LRgetBD Pro (LandArchive BD v2.1)  
-**Official Repository:** `tapos-linx/LRgetBD-Pro` (`bd.landarchive.lrgetbdpro`)
+**Official Repository:** `tapos-linx/LR_Mass_Downloader` (`bd.landarchive.lrgetbdpro`)
 
 ---
 
@@ -10,12 +10,12 @@
 - **Hybrid Mobile Runtime:** `@capacitor/core` (`CapacitorHttp` native bridge enabled in `capacitor.config.json` for `appId: "bd.landarchive.lrgetbdpro"` and `appName: "LRgetBD Pro"`)
 - **Official Release Coordinates (`src/config/repoConfig.ts`):**
   - **GitHub Owner:** `tapos-linx`
-  - **GitHub Repository Name:** `LRgetBD-Pro`
-  - **Full Repository Slug:** `tapos-linx/LRgetBD-Pro`
+  - **GitHub Repository Name:** `LR_Mass_Downloader`
+  - **Full Repository Slug:** `tapos-linx/LR_Mass_Downloader`
   - **Exact APK Asset Filename:** `LRgetBD-Pro.apk`
-  - **Direct Latest APK Download URL:** `https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk`
-  - **GitHub Releases API URL:** `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest`
-  - **GitHub Actions URL:** `https://github.com/tapos-linx/LRgetBD-Pro/actions`
+  - **Direct Latest APK Download URL:** `https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk`
+  - **GitHub Releases API URL:** `https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest`
+  - **GitHub Actions URL:** `https://github.com/tapos-linx/LR_Mass_Downloader/actions`
 - **Backend Relay:** Express server (`server.ts`) exposing `/api/eporcha-proxy` for server-side HTTP relay to `https://eporcha.tech` and `/api/github-release-check` for live GitHub Release inspection.
 
 ---
@@ -34,11 +34,11 @@
 
 ## 3. Binary Verification Gate (`src/services/binaryValidator.ts` & `src/services/apkReleaseService.ts`)
 - **PDF Magic-Byte Check:** Reads `new Uint8Array(buffer, 0, 5)` and verifies exact equality with `[0x25, 0x50, 0x44, 0x46, 0x2D]` (`%PDF-`) and `buffer.byteLength > 1024`.
-- **APK Release Asset Gate:** Verifies `.apk` assets returned by `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest` have `size > 1048576` (`> 1 MB`) before triggering a direct binary download (`https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk`).
+- **APK Release Asset Gate:** Verifies `.apk` assets returned by `https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest` have `size > 1048576` (`> 1 MB`) before triggering a direct binary download (`https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk`).
 
 ---
 
 ## 4. Polite Anti-Crash Sequential Queue (`src/services/queueEngine.ts`)
-- **Concurrency:** Configurable `1` or `2` concurrent workers.
-- **Polite Delay Jitter:** `600ms–1200ms` randomized delay between consecutive requests to prevent IP rate-limiting on `eporcha.tech`.
+- **Concurrency:** Configurable `1`, `2`, or `3` concurrent workers.
+- **Polite Delay Jitter:** `450ms–900ms` randomized delay between consecutive requests to prevent IP rate-limiting on `eporcha.tech`.
 - **Memory Safety:** Streams verified `ArrayBuffer` payloads directly into `IndexedDB` (`lr_eporcha_blobs_v2`) rather than holding large arrays in React state.

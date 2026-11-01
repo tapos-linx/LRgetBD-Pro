@@ -110,14 +110,59 @@ export function buildUnifiedQueueForDocumentSelection(params: {
   };
 }
 
-export function calculatePoliteJitterDelay(minMs = 600, maxMs = 1200, seedIndex = 0): number {
+export function calculatePoliteJitterDelay(minMs = 450, maxMs = 900, seedIndex = 0): number {
   const clampedMin = Math.max(200, Math.min(minMs, maxMs));
   const clampedMax = Math.max(clampedMin, maxMs);
   const spread = clampedMax - clampedMin;
   if (spread === 0) return clampedMin;
   // Deterministic-friendly offset mixed with time step
-  const stepOffset = ((seedIndex * 173 + 89) % (spread + 1));
+  const stepOffset = (seedIndex * 173 + 89) % (spread + 1);
   return clampedMin + stepOffset;
+}
+
+/**
+ * Resets all tasks that previously failed or encountered CORS errors back to QUEUED,
+ * incrementing their retryCount and updating the timestamp.
+ */
+export function retryFailedTasks(tasks: QueueTask[]): {
+  updatedTasks: QueueTask[];
+  retriedCount: number;
+} {
+  const nowIso = new Date().toISOString();
+  let count = 0;
+
+  const updatedTasks = tasks.map((t) => {
+    if (
+      t.status === 'FAILED_RETRY' ||
+      t.status === 'CORS_BRIDGE_REQUIRED' ||
+      t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH'
+    ) {
+      count++;
+      return {
+        ...t,
+        status: 'QUEUED' as const,
+        retryCount: (t.retryCount || 0) + 1,
+        errorMessage: undefined,
+        updatedAt: nowIso,
+      };
+    }
+    return t;
+  });
+
+  return { updatedTasks, retriedCount: count };
+}
+
+/**
+ * Resets all tasks in the queue back to QUEUED status.
+ */
+export function resetAllTasksToQueued(tasks: QueueTask[]): QueueTask[] {
+  const nowIso = new Date().toISOString();
+  return tasks.map((t) => ({
+    ...t,
+    status: 'QUEUED' as const,
+    errorMessage: undefined,
+    updatedAt: nowIso,
+  }));
 }
 
 export async function processSingleQueueTask(

@@ -1,18 +1,18 @@
 export const REPO_CONFIG = {
   owner: 'tapos-linx',
-  repo: 'LRgetBD-Pro',
-  fullSlug: 'tapos-linx/LRgetBD-Pro',
+  repo: 'LR_Mass_Downloader',
+  fullSlug: 'tapos-linx/LR_Mass_Downloader',
   appName: 'LRgetBD Pro',
   appId: 'bd.landarchive.lrgetbdpro',
   standardApkFilename: 'LRgetBD-Pro.apk',
   minValidApkSizeBytes: 1048576, // 1 MB (1,048,576 bytes)
-  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest',
+  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest',
   directFallbackAssetUrl:
-    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk',
-  actionsUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/actions',
-  releasesPageUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/releases',
+    'https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk',
+  actionsUrl: 'https://github.com/tapos-linx/LR_Mass_Downloader/actions',
+  releasesPageUrl: 'https://github.com/tapos-linx/LR_Mass_Downloader/releases',
   workflowFilePath: '.github/workflows/build-apk.yml',
-  repoStorageKey: 'lrgetbd_pro_repo_slug_v2',
+  repoStorageKey: 'lr_mass_downloader_repo_slug_v1',
 } as const;
 
 export function buildRepoEndpoints(slug: string = REPO_CONFIG.fullSlug) {
@@ -64,10 +64,16 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build Web Assets & Ensure Native Android Project Exists
+      - name: Install Dependencies & Run Test Suite
         run: |
           if [ -f "package.json" ]; then
             npm install --legacy-peer-deps
+            npm test
+          fi
+
+      - name: Build Web Assets & Ensure Native Android Project Exists
+        run: |
+          if [ -f "package.json" ]; then
             npm run build
             if [ ! -d "android" ] && [ ! -f "gradlew" ]; then
               npm install @capacitor/core @capacitor/cli @capacitor/android --save-dev --legacy-peer-deps
@@ -137,7 +143,7 @@ jobs:
           name: "LRgetBD Pro v1.0.\${{ github.run_number }} (Production Android APK)"
           body: |
             ### LRgetBD Pro — Official Android APK Release (Build #\${{ github.run_number }})
-            * **Direct APK Download:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)
+            * **Direct APK Download:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk)
             * **Android Package ID:** \`bd.landarchive.lrgetbdpro\`
             * **Native CORS Bypass Enabled:** Built with \`CapacitorHttp\` enabled for direct \`https://eporcha.tech\` extraction.
           files: ./LRgetBD-Pro.apk

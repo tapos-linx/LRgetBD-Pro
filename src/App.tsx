@@ -55,7 +55,14 @@ import {
   calculatePoliteJitterDelay,
   generateManifestAuditCsv,
   processSingleQueueTask,
+  resetAllTasksToQueued,
+  retryFailedTasks,
 } from './services/queueEngine';
+import {
+  bundleTasksToStructuredZip,
+  triggerIndividualPdfDownload,
+  triggerZipDownload,
+} from './services/downloadAndZipService';
 import { ApkInstallerModal } from './components/ApkInstallerModal';
 import { QueueConsoleView } from './components/QueueConsoleView';
 import { TabularIndexView } from './components/TabularIndexView';
@@ -720,20 +727,25 @@ export default function App() {
   }, [isQueueRunning, activeTaskId, tasks, proxyConfig, handleRunSingleTask]);
 
   const handleRetryFailed = () => {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.status === 'CORS_BRIDGE_REQUIRED' ||
-        t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH' ||
-        t.status === 'FAILED_RETRY'
-          ? {
-              ...t,
-              status: 'QUEUED',
-              retryCount: t.retryCount + 1,
-              updatedAt: new Date().toISOString(),
-            }
-          : t
-      )
+    const { updatedTasks, retriedCount } = retryFailedTasks(tasks);
+    setTasks(updatedTasks);
+    savePersistedQueue(updatedTasks);
+    setEnqueueFeedback(
+      retriedCount > 0
+        ? `Reset ${retriedCount} non-PDF / CORS-blocked tasks back to QUEUED.`
+        : 'No failed or blocked tasks found in queue to retry.'
     );
+  };
+
+  const handleDownloadIndividualTask = async (task: QueueTask) => {
+    const success = await triggerIndividualPdfDownload(task);
+    if (success) {
+      setEnqueueFeedback(`Downloaded individual record: ${task.fileName}`);
+    } else {
+      setEnqueueFeedback(
+        `Binary for ${task.fileName} is not in cache yet. Click "Fetch Now" to download directly.`
+      );
+    }
   };
 
   const handleClearQueue = async () => {
@@ -755,19 +767,24 @@ export default function App() {
   };
 
   const handleBundleZip = async () => {
+    if (tasks.length === 0) return;
     setIsBundlingZip(true);
+    setLastBundleStatus('Preparing structured ZIP archive with forensic manifest...');
     try {
-      const { zipBlob, verifiedPdfCount, auditFileName } =
-        await buildVerifiedArchiveZip(tasks);
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = auditFileName;
-      a.click();
-      URL.revokeObjectURL(url);
+      const { zipBlob, verifiedPdfCount, zipFileName } =
+        await bundleTasksToStructuredZip({
+          tasks,
+          onProgress: (percent, statusText) => {
+            setLastBundleStatus(`${percent}%: ${statusText}`);
+          },
+        });
+      triggerZipDownload(zipBlob, zipFileName);
       setLastBundleStatus(
-        `Downloaded ${auditFileName} (${(zipBlob.size / 1024).toFixed(1)} KB) containing ${verifiedPdfCount} %PDF- files + all extracted URL database records + MANIFEST_AUDIT.csv & MANIFEST_AUDIT.md.`
+        `Successfully downloaded ${zipFileName} (${(zipBlob.size / 1024).toFixed(1)} KB) containing ${verifiedPdfCount} verified PDFs in [District]/[Upazila]/[Survey] directory structure + MANIFEST_AUDIT.csv & MANIFEST_AUDIT.md.`
       );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setLastBundleStatus(`ZIP packaging error: ${msg}`);
     } finally {
       setIsBundlingZip(false);
     }
@@ -811,55 +828,39 @@ export default function App() {
           LRgetBD v2.1 · LandArchive BD
         </a>
 
-        {/* Zone 2: 4 concise single-line navigation links */}
+        {/* Zone 2: 4 concise single-line navigation links with subtle transition effect */}
         <nav
           aria-label="Primary Workspace Navigation"
-          className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300"
+          className="hidden md:flex items-center gap-1.5 p-1 bg-slate-900/60 rounded-xl border border-slate-800/80 backdrop-blur-sm"
         >
-          <button
-            type="button"
-            onClick={() => setActiveTab('extractor')}
-            className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeTab === 'extractor'
-                ? 'border-emerald-400 text-white'
-                : 'border-transparent text-slate-400'
-            }`}
-          >
-            Extractor
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('queue')}
-            className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeTab === 'queue'
-                ? 'border-emerald-400 text-white'
-                : 'border-transparent text-slate-400'
-            }`}
-          >
-            Live Queue ({tasks.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('index')}
-            className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeTab === 'index'
-                ? 'border-emerald-400 text-white'
-                : 'border-transparent text-slate-400'
-            }`}
-          >
-            Tabular Index ({tabularRecords.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('docs')}
-            className={`hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeTab === 'docs'
-                ? 'border-emerald-400 text-white'
-                : 'border-transparent text-slate-400'
-            }`}
-          >
-            6-Doc Architecture
-          </button>
+          {[
+            { id: 'extractor', label: 'Extractor' },
+            { id: 'queue', label: `Live Queue (${tasks.length})` },
+            { id: 'index', label: `Tabular Index (${tabularRecords.length})` },
+            { id: 'docs', label: '6-Doc Architecture' },
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as ActiveWorkspaceTab)}
+                className={`relative px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 ease-out whitespace-nowrap shrink-0 flex items-center gap-2 select-none ${
+                  isActive
+                    ? 'text-white bg-slate-800/95 border border-slate-700/80 shadow-sm shadow-emerald-950/30'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent'
+                }`}
+              >
+                <span className="relative z-10">{tab.label}</span>
+                {isActive && (
+                  <span
+                    className="absolute inset-x-3 -bottom-[1px] h-[2px] bg-emerald-400 rounded-full transition-all duration-200 ease-out shadow-[0_0_8px_rgba(52,211,153,0.6)]"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Zone 3: 1 primary action */}
@@ -875,27 +876,30 @@ export default function App() {
         </div>
       </header>
 
-      {/* Mobile Navigation Bar (Visible on mobile/tablet) */}
-      <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5">
+      {/* Mobile Navigation Bar (Visible on mobile/tablet) with subtle transitions */}
+      <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5 gap-1">
         {[
           { id: 'extractor', label: 'Extractor' },
           { id: 'queue', label: `Queue (${tasks.length})` },
           { id: 'index', label: `Index (${tabularRecords.length})` },
           { id: 'docs', label: '6-Docs' },
-        ].map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setActiveTab(item.id as ActiveWorkspaceTab)}
-            className={`px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 ${
-              activeTab === item.id
-                ? 'bg-emerald-600 text-white'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
+        ].map((item) => {
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveTab(item.id as ActiveWorkspaceTab)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all duration-200 ease-out ${
+                isActive
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Main Workspace Container (1440px Desktop Presence) */}
@@ -959,7 +963,7 @@ export default function App() {
 
         {/* WORKSPACE VIEW 1: EXTRACTOR */}
         {activeTab === 'extractor' && (
-          <div className="space-y-6">
+          <div key="view-extractor" className="space-y-6 workspace-view-enter">
             {/* STEP 01: Cascading Area Selection (Division -> District -> Upazila -> Auto-Select 100% Mouzas) */}
             <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1706,35 +1710,44 @@ export default function App() {
 
         {/* WORKSPACE VIEW 2: LIVE QUEUE CONSOLE */}
         {activeTab === 'queue' && (
-          <QueueConsoleView
-            tasks={tasks}
-            isRunning={isQueueRunning}
-            activeTaskId={activeTaskId}
-            proxyConfig={proxyConfig}
-            onUpdateProxyConfig={handleUpdateProxyConfig}
-            onStartQueue={() => setIsQueueRunning(true)}
-            onPauseQueue={() => setIsQueueRunning(false)}
-            onRunSingleTask={handleRunSingleTask}
-            onRetryFailed={handleRetryFailed}
-            onClearQueue={handleClearQueue}
-            onBundleZip={handleBundleZip}
-            onExportCsv={handleExportAuditCsv}
-            isBundlingZip={isBundlingZip}
-            lastBundleStatus={lastBundleStatus}
-          />
+          <div key="view-queue" className="workspace-view-enter">
+            <QueueConsoleView
+              tasks={tasks}
+              isRunning={isQueueRunning}
+              activeTaskId={activeTaskId}
+              proxyConfig={proxyConfig}
+              onUpdateProxyConfig={handleUpdateProxyConfig}
+              onStartQueue={() => setIsQueueRunning(true)}
+              onPauseQueue={() => setIsQueueRunning(false)}
+              onRunSingleTask={handleRunSingleTask}
+              onRetryFailed={handleRetryFailed}
+              onClearQueue={handleClearQueue}
+              onBundleZip={handleBundleZip}
+              onExportCsv={handleExportAuditCsv}
+              onDownloadIndividual={handleDownloadIndividualTask}
+              isBundlingZip={isBundlingZip}
+              lastBundleStatus={lastBundleStatus}
+            />
+          </div>
         )}
 
         {/* WORKSPACE VIEW 3: OFFLINE TABULAR INDEX */}
         {activeTab === 'index' && (
-          <TabularIndexView
-            records={tabularRecords}
-            onImportRecords={handleImportRecords}
-            onClearRecords={handleClearRecords}
-          />
+          <div key="view-index" className="workspace-view-enter">
+            <TabularIndexView
+              records={tabularRecords}
+              onImportRecords={handleImportRecords}
+              onClearRecords={handleClearRecords}
+            />
+          </div>
         )}
 
         {/* WORKSPACE VIEW 4: 6-DOC ARCHITECTURE VIEWER */}
-        {activeTab === 'docs' && <ArchitectureDocsView />}
+        {activeTab === 'docs' && (
+          <div key="view-docs" className="workspace-view-enter">
+            <ArchitectureDocsView />
+          </div>
+        )}
       </main>
 
       {/* Quiet Footer */}
