@@ -1,0 +1,6 @@
+{
+  "name": "LR Mass Downloader (LandArchive BD / LRgetBD v2.1)",
+  "description": "Open-access Bangladesh land record mass downloader, %PDF- binary verifier, and Mouza Khatian/Dag Book archival engine powered by eporcha.tech.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
