@@ -107,14 +107,14 @@ export function inspectGithubReleasePayload(
       checkedAt: nowIso,
       message:
         httpStatus === 404
-          ? `No published release found yet on ${endpoints.fullSlug} (HTTP 404). Push or dispatch .github/workflows/build-release-apk.yml in GitHub Actions to automatically compile and publish ${REPO_CONFIG.standardApkFilename}.`
+          ? `No published release found yet on ${endpoints.fullSlug} (HTTP 404). Push or dispatch ${REPO_CONFIG.workflowFilePath} in GitHub Actions to automatically compile and publish ${REPO_CONFIG.standardApkFilename}.`
           : `Unable to reach GitHub Releases API for ${endpoints.fullSlug} (HTTP ${httpStatus}).`,
     };
   }
 
   const assets = Array.isArray(data.assets) ? data.assets : [];
 
-  // Prioritize LRgetBD-Pro-latest.apk with size > 1048576, else any .apk with size > 1048576
+  // Prioritize LRgetBD-Pro.apk with size > 1048576 (1 MB), else any .apk with size > 1048576
   const validApkAssets = assets.filter(
     (a) =>
       typeof a.name === 'string' &&
@@ -156,7 +156,8 @@ export function inspectGithubReleasePayload(
   const sizeBytes = prioritizedAsset.size || 0;
   const sizeMb = `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
   const assetName = prioritizedAsset.name || REPO_CONFIG.standardApkFilename;
-  const browserDownloadUrl = prioritizedAsset.browser_download_url || '';
+  const browserDownloadUrl =
+    prioritizedAsset.browser_download_url || endpoints.directFallbackAssetUrl;
   const downloadCount = prioritizedAsset.download_count ?? 0;
 
   return {
@@ -184,8 +185,7 @@ export function inspectGithubReleasePayload(
 /**
  * Live GitHub Releases API Inspector.
  * Queries https://api.github.com/repos/${owner}/${repo}/releases/latest with
- * Accept: application/vnd.github+json (via the server relay when available to prevent
- * noisy browser console 404s, with direct GitHub API fallback for Capacitor/static environments).
+ * Accept: application/vnd.github+json.
  */
 export async function fetchLatestApkRelease(
   customRepoSlug?: string
@@ -214,10 +214,9 @@ export async function fetchLatestApkRelease(
       }
     }
   } catch {
-    // Fall back to direct GitHub API query below (e.g. inside Capacitor Android APK or static hosting)
+    // Fall back to direct GitHub API query below
   }
 
-  // Direct query to https://api.github.com/repos/${owner}/${repo}/releases/latest
   try {
     const response = await fetch(endpoints.releasesApiEndpoint, {
       method: 'GET',
@@ -249,7 +248,7 @@ export async function fetchLatestApkRelease(
  * Pre-Flight Verification & Direct Binary Download Trigger.
  * Never generates a synthetic Blob in JavaScript and never downloads if the release does not exist yet.
  * Triggers a native browser/Android download via an invisible <a> element pointing to the verified
- * browser_download_url (which follows GitHub's 302 redirect to objects.githubusercontent.com).
+ * browser_download_url or https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk.
  */
 export function triggerVerifiedApkDownload(release: ApkReleaseCheckResult): boolean {
   if (

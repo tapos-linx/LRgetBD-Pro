@@ -105,7 +105,8 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 ## 4. Official GitHub Release Coordinates (\`src/config/repoConfig.ts\`)
 - **Repository:** \`tapos-linx/LRgetBD-Pro\`
 - **Android Package ID:** \`bd.landarchive.lrgetbdpro\` (\`LRgetBD Pro\`)
-- **Standard Release APK:** \`LRgetBD-Pro-latest.apk\` (\`https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest\`)`,
+- **Standard Release APK:** \`LRgetBD-Pro.apk\` (\`https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk\`)
+- **Releases API:** \`https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest\``,
   },
   {
     id: 'doc-05-schema',
@@ -119,7 +120,7 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 
 ## 1. Authoritative Geographic Dataset (\`src/data/geoHierarchy.ts\`)
 - **Brahmanbaria District (Code 12):**
-  - **Nabinagar Upazila:** 24 Mouzas pre-indexed, highlighting **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** — \`Goalai / গোয়ালী (JL-114)\`, \`Kaitala / কাইতলা (JL-115)\`, \`Noagaon / নোয়াগাঁও (JL-116)\`, \`Ramnagar / রামনগর (JL-117)\`, plus Balia, Mehari, Nilkhi, Tilinagar, Kedarkhola, Bitghar, Satmora, Rasullabad, Salimganj, Shyamgram, Boroikandi, Krishnanagar, Natghar, Ratanpur, Sreenagar, Vidyakut.
+  - **Nabinagar Upazila:** 24 Mouzas pre-indexed, highlighting **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** — \`Goalai / গোয়ালী (JL-114)\`, \`Kaitala / কাইতলা (JL-115)\`, \`Noagaon / নোয়াগাঁও (JL-116)\`, \`Ramnagar / রামনগর (JL-117)\`, plus Balia, Mehari, Nilkhi, Tilinagar, Kedarkhola, Bitghar, Satmora, Rasullabad, Salimganj, Shyamgram, Boroikandi, Krishnanagar, Krishnanagar, Natghar, Ratanpur, Sreenagar, Vidyakut.
   - All 9 Upazilas: Nabinagar, Brahmanbaria Sadar, Kasba, Ashuganj, Sarail, Nasirnagar, Akhaura, Bancharampur, Bijoynagar.
 - **Cumilla District (Code 19):** Muradnagar, Debidwar, Brahmanpara.
 
@@ -141,6 +142,6 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 - **Phase 1:** Generate all 6 \`/docs/*.md\` files, strict TypeScript models (\`src/types/land.ts\`), and the Brahmanbaria/Cumilla dataset (\`src/data/geoHierarchy.ts\`).
 - **Phase 2:** Implement \`src/services/eporchaTechClient.ts\` (dual Capacitor Native HTTP + Web/Server Proxy transport for all 5 \`eporcha.tech\` endpoints) and \`src/services/binaryValidator.ts\` (\`%PDF-\` magic-byte verifier).
 - **Phase 3:** Build the Sequential Queue Engine, \`IndexedDB\` storage service, \`JSZip\` bundler, and Material Design 3 Bilingual UI.
-- **Phase 4:** Configure \`capacitor.config.json\` (\`bd.landarchive.lrgetbdpro\`, \`CapacitorHttp.enabled = true\`) and \`.github/workflows/build-release-apk.yml\` for automated GitHub Releases APK publishing (\`tapos-linx/LRgetBD-Pro\` -> \`LRgetBD-Pro-latest.apk\`).`,
+- **Phase 4:** Configure \`capacitor.config.json\` (\`bd.landarchive.lrgetbdpro\`, \`CapacitorHttp.enabled = true\`) and \`.github/workflows/build-apk.yml\` for automated GitHub Releases APK publishing (\`tapos-linx/LRgetBD-Pro\` -> \`LRgetBD-Pro.apk\`).`,
   },
 ];

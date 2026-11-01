@@ -202,14 +202,14 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
   assert.equal(REPO_CONFIG.fullSlug, 'tapos-linx/LRgetBD-Pro');
   assert.equal(REPO_CONFIG.appName, 'LRgetBD Pro');
   assert.equal(REPO_CONFIG.appId, 'bd.landarchive.lrgetbdpro');
-  assert.equal(REPO_CONFIG.standardApkFilename, 'LRgetBD-Pro-latest.apk');
+  assert.equal(REPO_CONFIG.standardApkFilename, 'LRgetBD-Pro.apk');
   assert.equal(
     REPO_CONFIG.releasesApiEndpoint,
     'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest'
   );
   assert.equal(
     REPO_CONFIG.directFallbackAssetUrl,
-    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro-latest.apk'
+    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk'
   );
 
   const pending404 = inspectGithubReleasePayload(404, null, 'tapos-linx/LRgetBD-Pro');
@@ -222,10 +222,10 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
       tag_name: 'v1.0.1',
       assets: [
         {
-          name: 'LRgetBD-Pro-latest.apk',
+          name: 'LRgetBD-Pro.apk',
           size: 50000, // < 1MB should be rejected!
           browser_download_url:
-            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.1/LRgetBD-Pro-latest.apk',
+            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.1/LRgetBD-Pro.apk',
         },
       ],
     },
@@ -241,18 +241,11 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
       published_at: '2026-11-01T10:00:00Z',
       assets: [
         {
-          name: 'LRgetBD-Pro-v1.0.12.apk',
-          size: 4500000,
-          download_count: 3,
-          browser_download_url:
-            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.12/LRgetBD-Pro-v1.0.12.apk',
-        },
-        {
-          name: 'LRgetBD-Pro-latest.apk',
+          name: 'LRgetBD-Pro.apk',
           size: 4500000,
           download_count: 14,
           browser_download_url:
-            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.12/LRgetBD-Pro-latest.apk',
+            'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/v1.0.12/LRgetBD-Pro.apk',
         },
       ],
     },
@@ -260,7 +253,7 @@ test('verifies official LRgetBD-Pro repoConfig coordinates and APK release inspe
   );
   assert.equal(validApk.verified, true);
   assert.equal(validApk.status, 'VERIFIED_READY');
-  assert.equal(validApk.assetName, 'LRgetBD-Pro-latest.apk');
+  assert.equal(validApk.assetName, 'LRgetBD-Pro.apk');
   assert.equal(validApk.tagName, 'v1.0.12');
   assert.equal(validApk.sizeMb, '4.29 MB');
   assert.equal(validApk.downloadCount, 14);

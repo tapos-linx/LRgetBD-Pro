@@ -1,5 +1,5 @@
 # 04_TRD.md — Technical Requirements & Data Contracts (API_SPEC.md Equivalent)
-**Project:** LRgetBD Pro (LR Mass Downloader / LandArchive BD v2.1)  
+**Project:** LRgetBD Pro (LandArchive BD v2.1)  
 **Official Repository:** `tapos-linx/LRgetBD-Pro` (`bd.landarchive.lrgetbdpro`)
 
 ---
@@ -9,10 +9,13 @@
 - **Archival & Storage:** `jszip` (ZIP packaging + Audit Manifests), `IndexedDB` (`lr_eporcha_blobs_v2`, `lr_eporcha_records_v2`), `localStorage` (`lr_eporcha_queue_v2`)
 - **Hybrid Mobile Runtime:** `@capacitor/core` (`CapacitorHttp` native bridge enabled in `capacitor.config.json` for `appId: "bd.landarchive.lrgetbdpro"` and `appName: "LRgetBD Pro"`)
 - **Official Release Coordinates (`src/config/repoConfig.ts`):**
-  - **GitHub Repository Slug:** `tapos-linx/LRgetBD-Pro`
-  - **GitHub Releases API Endpoint:** `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest`
-  - **Standard Release APK Filename:** `LRgetBD-Pro-latest.apk`
-  - **Direct Fallback Release Asset URL:** `https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro-latest.apk`
+  - **GitHub Owner:** `tapos-linx`
+  - **GitHub Repository Name:** `LRgetBD-Pro`
+  - **Full Repository Slug:** `tapos-linx/LRgetBD-Pro`
+  - **Exact APK Asset Filename:** `LRgetBD-Pro.apk`
+  - **Direct Latest APK Download URL:** `https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk`
+  - **GitHub Releases API URL:** `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest`
+  - **GitHub Actions URL:** `https://github.com/tapos-linx/LRgetBD-Pro/actions`
 - **Backend Relay:** Express server (`server.ts`) exposing `/api/eporcha-proxy` for server-side HTTP relay to `https://eporcha.tech` and `/api/github-release-check` for live GitHub Release inspection.
 
 ---
@@ -31,7 +34,7 @@
 
 ## 3. Binary Verification Gate (`src/services/binaryValidator.ts` & `src/services/apkReleaseService.ts`)
 - **PDF Magic-Byte Check:** Reads `new Uint8Array(buffer, 0, 5)` and verifies exact equality with `[0x25, 0x50, 0x44, 0x46, 0x2D]` (`%PDF-`) and `buffer.byteLength > 1024`.
-- **APK Release Asset Gate:** Verifies `.apk` assets returned by `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest` have `size > 1048576` (`> 1 MB`) before triggering a direct binary download (`LRgetBD-Pro-latest.apk`).
+- **APK Release Asset Gate:** Verifies `.apk` assets returned by `https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest` have `size > 1048576` (`> 1 MB`) before triggering a direct binary download (`https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk`).
 
 ---
 

@@ -87,7 +87,6 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
     setLoading(true);
     setDownloadStatusMsg(null);
     try {
-      // Pre-flight verification right before triggering download
       const latest = await fetchLatestApkRelease(repoSlugInput);
       setReleaseInfo(latest);
 
@@ -95,12 +94,12 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
         const triggered = triggerVerifiedApkDownload(latest);
         if (triggered) {
           setDownloadStatusMsg(
-            `Downloading verified binary ${latest.assetName} (${latest.sizeMb}) from GitHub Releases...`
+            `Downloading verified binary ${latest.assetName} (${latest.sizeMb}) from ${latest.browserDownloadUrl}...`
           );
         }
       } else {
         setDownloadStatusMsg(
-          `Download prevented: No verified .apk asset (> 1 MB) found on ${latest.repoSlug} yet. Run the GitHub Actions workflow first.`
+          `Download prevented: No verified .apk asset (> 1 MB) found on ${latest.repoSlug} yet. Run ${REPO_CONFIG.workflowFilePath} in GitHub Actions first.`
         );
       }
     } finally {
@@ -207,8 +206,15 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
               </button>
             </div>
 
-            <div className="text-[11px] font-mono-tabular text-slate-400 break-all">
-              API: {releaseInfo?.apiEndpoint || REPO_CONFIG.releasesApiEndpoint}
+            <div className="text-[11px] font-mono-tabular text-slate-400 break-all space-y-0.5">
+              <div>
+                API: {releaseInfo?.apiEndpoint || REPO_CONFIG.releasesApiEndpoint}
+              </div>
+              <div>
+                Direct Asset URL:{' '}
+                {releaseInfo?.directFallbackAssetUrl ||
+                  REPO_CONFIG.directFallbackAssetUrl}
+              </div>
             </div>
           </div>
 
@@ -325,12 +331,12 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
                 </div>
               </div>
 
-              {/* 3 Required Direct Action Buttons */}
+              {/* 3 Direct Action Buttons */}
               <div className="flex flex-wrap items-center gap-2.5 pt-1">
                 <a
                   href={
                     releaseInfo?.actionsUrl ||
-                    `https://github.com/${repoSlugInput}/actions`
+                    REPO_CONFIG.actionsUrl
                   }
                   target="_blank"
                   rel="noopener noreferrer"
@@ -350,12 +356,12 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
                   {copiedKey === 'workflow-yaml' ? (
                     <>
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Copied .github/workflows/build-release-apk.yml!</span>
+                      <span>Copied {REPO_CONFIG.workflowFilePath}!</span>
                     </>
                   ) : (
                     <>
                       <Copy className="w-3.5 h-3.5 text-amber-400" />
-                      <span>Copy .github/workflows/build-release-apk.yml</span>
+                      <span>Copy {REPO_CONFIG.workflowFilePath}</span>
                     </>
                   )}
                 </button>
@@ -363,7 +369,7 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
                 <a
                   href={
                     releaseInfo?.releasesPageUrl ||
-                    `https://github.com/${repoSlugInput}/releases`
+                    REPO_CONFIG.releasesPageUrl
                   }
                   target="_blank"
                   rel="noopener noreferrer"
@@ -387,7 +393,7 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-semibold text-slate-200">
                 1. Self-Healing GitHub Actions Workflow (
-                <code>.github/workflows/build-release-apk.yml</code>)
+                <code>{REPO_CONFIG.workflowFilePath}</code>)
               </span>
               <button
                 type="button"
