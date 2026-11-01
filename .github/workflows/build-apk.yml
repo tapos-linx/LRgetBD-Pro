@@ -5,36 +5,41 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+# Grants GitHub Actions permission to create Releases and upload LRgetBD-Pro.apk
 permissions:
   contents: write
 
 jobs:
-  build-android-apk:
+  build-apk:
+    name: Compile & Publish LRgetBD-Pro.apk
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: 2. Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Setup Java JDK 21 (Temurin)
+      - name: 3. Setup Java JDK 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
-      - name: Setup Android SDK
+      - name: 4. Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Build Web Assets & Ensure Native Android Project Exists
+      - name: 5. Build Web & Capacitor Layer (If package.json Exists)
         run: |
           if [ -f "package.json" ]; then
+            echo "Detected web/hybrid project (package.json found). Building web assets..."
             npm install --legacy-peer-deps
             npm run build
             if [ ! -d "android" ] && [ ! -f "gradlew" ]; then
+              echo "Scaffolding missing Capacitor Android directory..."
               npm install @capacitor/core @capacitor/cli @capacitor/android --save-dev --legacy-peer-deps
               cat << 'EOF' > capacitor.config.json
               {
@@ -56,56 +61,73 @@ jobs:
             if [ -d "android" ]; then
               npx cap sync android
             fi
+          else
+            echo "Pure Native Kotlin/Android repository detected. Skipping npm step."
           fi
 
-      - name: Grant Gradle Execute Permissions & Build Debug APK
+      - name: 6. Compile Android APK via Gradle
         run: |
           if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon
+            echo "Building from root ./gradlew..."
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace
           elif [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
+            echo "Building from ./android/gradlew..."
+            chmod +x ./android/gradlew
             cd android
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
           else
-            echo "ERROR: No gradlew found in root or android/ directory!"
-            exit 1
+            echo "Gradle wrapper missing. Generating Gradle wrapper..."
+            gradle wrapper
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace
           fi
 
-      - name: Locate Built APK, Verify Integrity (> 1MB) & Copy to LRgetBD-Pro.apk
+      - name: 7. Verify APK Size (> 1MB) & Standardize Name to LRgetBD-Pro.apk
         run: |
-          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
-            APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          elif [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-          else
-            echo "ERROR: app-debug.apk was not generated!"
+          FOUND_APK=$(find . -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+          if [ -z "$FOUND_APK" ]; then
+            echo "ERROR: No compiled .apk file found in build/outputs/apk/debug/!"
             exit 1
           fi
-          FILE_SIZE=$(stat -c%s "$APK_PATH")
-          if [ "$FILE_SIZE" -lt 1048576 ]; then
-            echo "ERROR: APK file is smaller than 1MB ($FILE_SIZE bytes) - corrupted build!"
-            exit 1
-          fi
-          cp "$APK_PATH" ./LRgetBD-Pro.apk
+          echo "Found compiled APK at: $FOUND_APK"
 
-      - name: Upload LRgetBD-Pro.apk to Workflow Artifacts
+          FILE_SIZE=$(stat -c%s "$FOUND_APK")
+          echo "Compiled APK Size: $FILE_SIZE bytes"
+          if [ "$FILE_SIZE" -lt 1048576 ]; then
+            echo "ERROR: APK is smaller than 1MB ($FILE_SIZE bytes) - build is invalid!"
+            exit 1
+          fi
+
+          # Standardized output filename matching LRMassDownloaderScreen.kt & README.md
+          cp "$FOUND_APK" ./LRgetBD-Pro.apk
+          cp "$FOUND_APK" ./LRgetBD-Pro-v1.0.${{ github.run_number }}.apk
+          ls -lh ./LRgetBD-Pro*.apk
+
+      - name: 8. Upload LRgetBD-Pro.apk to Workflow Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: LRgetBD-Pro-APK
-          path: ./LRgetBD-Pro.apk
+          path: |
+            ./LRgetBD-Pro.apk
+            ./LRgetBD-Pro-v1.0.${{ github.run_number }}.apk
+          if-no-files-found: error
 
-      - name: Publish LRgetBD-Pro.apk to GitHub Releases (Latest)
+      - name: 9. Publish LRgetBD-Pro.apk to GitHub Releases (Latest)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: "LRgetBD Pro v1.0.${{ github.run_number }} (Production Android APK)"
+          name: "LRgetBD Pro v1.0.${{ github.run_number }} (Official Android APK)"
           body: |
-            ### LRgetBD Pro — Official Android APK Release (Build #${{ github.run_number }})
+            ## LRgetBD Pro — Official Android APK Release (Build #${{ github.run_number }})
             * **Direct APK Download:** [`LRgetBD-Pro.apk`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)
-            * **Android Package ID:** `bd.landarchive.lrgetbdpro`
-            * **Native CORS Bypass Enabled:** Built with `CapacitorHttp` enabled for direct `https://eporcha.tech` extraction.
-          files: ./LRgetBD-Pro.apk
+            * **Open-Access Portal:** Configured for 100% free extraction from `https://eporcha.tech` (`survey-khatian`, `namjari-khatian`, `mouza-vittik-khatian`, `mouza-vittik-dag`, `mouza-map`).
+            * **Package ID:** `bd.landarchive.lrgetbdpro`
+          files: |
+            ./LRgetBD-Pro.apk
+            ./LRgetBD-Pro-v1.0.${{ github.run_number }}.apk
           draft: false
           prerelease: false
           make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
