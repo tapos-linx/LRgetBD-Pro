@@ -1,16 +1,18 @@
 export type EporchaEndpointType =
-  | 'survey-khatian'
-  | 'namjari-khatian'
   | 'mouza-vittik-khatian'
   | 'mouza-vittik-dag'
-  | 'mouza-map';
+  | 'survey-khatian'
+  | 'namjari-khatian'
+  | 'mouza-map'
+  | 'khatian-index';
 
 export type EporchaDocType =
-  | 'SURVEY_KHATIAN'
-  | 'NAMJARI_KHATIAN'
   | 'MOUZA_KHATIAN_BOOK'
   | 'MOUZA_DAG_BOOK'
-  | 'MOUZA_MAP';
+  | 'SURVEY_KHATIAN'
+  | 'NAMJARI_KHATIAN'
+  | 'MOUZA_MAP'
+  | 'KHATIAN_INDEX';
 
 export type SurveyType = 'CS' | 'SA' | 'RS' | 'BS' | 'MUTATION';
 

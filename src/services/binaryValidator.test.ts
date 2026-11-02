@@ -130,7 +130,7 @@ test('cascading districts populate upazilas and Select All generates full multi-
 
   const cumillaDist = chittagongDiv.districts.find((d) => d.id === 'dist-cumilla');
   assert.ok(cumillaDist);
-  assert.equal(cumillaDist.upazilas.length, 8);
+  assert.equal(cumillaDist.upazilas.length, 17);
 
   const debidwar = cumillaDist.upazilas.find((u) => u.id === 'upz-debidwar');
   assert.ok(debidwar);
@@ -420,6 +420,44 @@ test('calculateQueueProgress accurately computes completion percentage and statu
   assert.equal(allComplete.verifiedPdfCount, 2);
 });
 
+test('nationwide hierarchy covers all 8 divisions and all 64 districts of Bangladesh', () => {
+  assert.equal(GEO_HIERARCHY.length, 8, 'Bangladesh has 8 divisions');
 
+  const expectedDivisions = [
+    'chattogram',
+    'dhaka',
+    'rajshahi',
+    'khulna',
+    'barishal',
+    'sylhet',
+    'rangpur',
+    'mymensingh',
+  ];
 
+  for (const divKey of expectedDivisions) {
+    const found = GEO_HIERARCHY.some(
+      (d) =>
+        d.id.toLowerCase().includes(divKey) ||
+        d.eporchaSlug.toLowerCase().includes(divKey) ||
+        d.nameEn.toLowerCase().includes(divKey) ||
+        (divKey === 'chattogram' && d.id.includes('chittagong'))
+    );
+    assert.ok(found, `Expected division ${divKey} in GEO_HIERARCHY`);
+  }
 
+  let totalDistricts = 0;
+  let totalUpazilas = 0;
+  for (const div of GEO_HIERARCHY) {
+    totalDistricts += div.districts.length;
+    for (const dist of div.districts) {
+      assert.ok(dist.upazilas.length > 0, `District ${dist.nameEn} should have upazilas`);
+      totalUpazilas += dist.upazilas.length;
+      for (const upz of dist.upazilas) {
+        assert.ok(upz.mouzas.length > 0, `Upazila ${upz.nameEn} should have mouzas`);
+      }
+    }
+  }
+
+  assert.equal(totalDistricts, 64, 'Bangladesh must have exactly 64 districts');
+  assert.ok(totalUpazilas >= 490, 'Bangladesh must have ~495 upazilas');
+});

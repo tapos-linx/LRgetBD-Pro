@@ -73,6 +73,7 @@ import { ApkInstallerModal } from './components/ApkInstallerModal';
 import { BatchRenameModal } from './components/BatchRenameModal';
 import { GoogleDriveSyncModal } from './components/GoogleDriveSyncModal';
 import { GlobalProgressBar } from './components/GlobalProgressBar';
+import { NationwideQueueMonitor } from './components/NationwideQueueMonitor';
 import { QueueConsoleView } from './components/QueueConsoleView';
 import { TabularIndexView } from './components/TabularIndexView';
 import { ArchitectureDocsView } from './components/ArchitectureDocsView';
@@ -301,8 +302,9 @@ export default function App() {
     setActiveTaskId(null);
     setTasks(builtTasks);
     savePersistedQueue(builtTasks);
+    setIsQueueRunning(true);
     setEnqueueFeedback(
-      `Division "${nextDiv.nameEn}" → District "${firstDist.nameEn}" → Upazila "${firstUpz.nameEn}": Auto-selected 100% Mouzas (${allMouzas.length}/${allMouzas.length}) and built ${builtTasks.length} download tasks.`
+      `Division "${nextDiv.nameEn}" → District "${firstDist.nameEn}" → Upazila "${firstUpz.nameEn}": Total Mouzas Found: ${allMouzas.length} (100% auto-selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
     );
   };
 
@@ -316,10 +318,6 @@ export default function App() {
     setUpazilaId(firstUpz.id);
     setUnionFilter('ALL');
     setMouzaSearch('');
-
-    // Clear previous selectedMouzas state before force-selecting 100% of first Upazila's Mouzas
-    setSelectedMouzas([]);
-    setSelectedMouzaIds([]);
 
     const { allMouzas, selectedMouzaIds: nextSelectedIds, tasks: builtTasks } =
       buildQueueTasksForUpazila({
@@ -339,19 +337,15 @@ export default function App() {
     setActiveTaskId(null);
     setTasks(builtTasks);
     savePersistedQueue(builtTasks);
+    setIsQueueRunning(true);
     setEnqueueFeedback(
-      `District "${nextDist.nameBn} (${nextDist.nameEn})" selected: Loaded all ${nextDist.upazilas.length} Upazilas. Auto-selected 100% Mouzas (${allMouzas.length}/${allMouzas.length}) for ${firstUpz.nameEn} and built ${builtTasks.length} download queue tasks.`
+      `District "${nextDist.nameBn} (${nextDist.nameEn})" selected: Loaded all ${nextDist.upazilas.length} Upazilas. Total Mouzas Found in ${firstUpz.nameEn}: ${allMouzas.length} (100% auto-selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
     );
   };
 
-  // 3. Cascade Handler: Upazila Change -> Immediately clears selectedMouzas state, force-selects 100% of the new Upazila's Mouzas, and automatically re-initializes the queue generation engine to sync all tasks with the full Mouza set!
+  // 3. Cascade Handler: Upazila Change -> Immediately fetches/counts all Mouzas, auto-selects 100% without manual clicks, builds queue array, and automatically starts sequential execution from Queue Index 0!
   const handleUpazilaChange = (nextUpazilaId: string) => {
-    // Step 1: Immediately clear selectedMouzas, selectedMouzaIds, filters, and active queue state
-    setIsQueueRunning(false);
     setActiveTaskId(null);
-    setSelectedMouzas([]);
-    setSelectedMouzaIds([]);
-    setTasks([]);
     setUnionFilter('ALL');
     setMouzaSearch('');
     setUpazilaId(nextUpazilaId);
@@ -360,7 +354,7 @@ export default function App() {
       activeDistrict.upazilas.find((u) => u.id === nextUpazilaId) ||
       activeDistrict.upazilas[0];
 
-    // Step 2: Force-select 100% of the new Upazila's Mouzas and re-initialize the queue generation engine
+    // Force-select 100% of the new Upazila's Mouzas and build queue
     const { allMouzas, selectedMouzaIds: nextSelectedIds, tasks: builtTasks } =
       buildQueueTasksForUpazila({
         division: activeDivision,
@@ -374,13 +368,33 @@ export default function App() {
         mapSheetNo: mapSheetInput || 1,
       });
 
-    // Step 3: Sync selectedMouzas, selectedMouzaIds, and the re-initialized task queue with the full Mouza set
     setSelectedMouzas(allMouzas);
     setSelectedMouzaIds(nextSelectedIds);
     setTasks(builtTasks);
     savePersistedQueue(builtTasks);
+    // Begin execution automatically, starting from Queue Index 0 (1st Mouza)
+    setIsQueueRunning(true);
+
     setEnqueueFeedback(
-      `Upazila "${nextUpz.nameBn} (${nextUpz.nameEn})" selected: Cleared previous selection, force-selected 100% of available Mouzas (${selectedMouzas.length || allMouzas.length}/${allMouzas.length}), and re-initialized ${builtTasks.length} tasks in the download queue.`
+      `Upazila "${nextUpz.nameBn} (${nextUpz.nameEn})" selected: Total Mouzas Found: ${allMouzas.length}. 100% Mouzas auto-selected. Processing queue generated with ${builtTasks.length} tasks and started automatically from Index 0.`
+    );
+  };
+
+  // Restart queue from Queue Index 0 (1st Mouza)
+  const handleRestartQueueFromZero = () => {
+    setActiveTaskId(null);
+    const resetTasks: QueueTask[] = tasks.map((t) => ({
+      ...t,
+      status: 'QUEUED' as const,
+      pdfVerified: false,
+      retries: 0,
+      errorMessage: undefined,
+    }));
+    setTasks(resetTasks);
+    savePersistedQueue(resetTasks);
+    setIsQueueRunning(true);
+    setEnqueueFeedback(
+      `Queue reset to Index 0: Sequential processing restarted for all ${allMouzasForUpazila.length} Mouzas.`
     );
   };
 
@@ -1056,14 +1070,13 @@ export default function App() {
 
                 {/* Prominent Upazila Total Mouza Counter & Quick Toggles */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono-tabular text-slate-200">
-                    Total Mouzas in {activeUpazila.nameEn}:{' '}
-                    <span className="text-emerald-400 font-bold">
+                  <div className="px-3.5 py-1.5 rounded-xl bg-slate-950 border-2 border-emerald-500/60 text-xs font-mono-tabular text-slate-200 shadow-md">
+                    <span className="text-slate-300 font-medium">Total Mouzas Found:</span>{' '}
+                    <span className="text-emerald-400 font-black text-sm">
                       {allMouzasForUpazila.length}
                     </span>{' '}
-                    · Selected:{' '}
-                    <span className="text-white font-bold">
-                      {selectedMouzaIds.length}/{allMouzasForUpazila.length}
+                    <span className="text-emerald-300 font-bold ml-1">
+                      (100% Auto-Selected: {selectedMouzaIds.length}/{allMouzasForUpazila.length})
                     </span>
                   </div>
 
@@ -1208,6 +1221,20 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Nationwide Automated Queue Monitor & Prominent Mouza Counter */}
+              <NationwideQueueMonitor
+                upazila={activeUpazila}
+                districtNameEn={activeDistrict.nameEn}
+                divisionNameEn={activeDivision.nameEn}
+                totalMouzasCount={allMouzasForUpazila.length}
+                selectedMouzas={allMouzasForUpazila}
+                tasks={tasks}
+                isQueueRunning={isQueueRunning}
+                activeTaskId={activeTaskId}
+                onToggleQueue={() => setIsQueueRunning((prev) => !prev)}
+                onRestartQueue={handleRestartQueueFromZero}
+              />
 
               {/* Dynamic Custom Mouza Registration Form */}
               {showCustomMouzaForm && (
@@ -1360,17 +1387,52 @@ export default function App() {
                   const isChecked = selectedMouzaIds.includes(mouza.id);
                   const isKaitalaSouth =
                     mouza.unionNameEn === '20-No Kaitala South Union';
+                  
+                  // Task Status Logic
+                  const mouzaTasks = tasks.filter(t => t.mouzaId === mouza.id);
+                  const total = mouzaTasks.length;
+                  const successCount = mouzaTasks.filter(t => t.status === 'MAGIC_BYTE_VERIFIED' || t.status === 'HTML_INDEX_EXTRACTED').length;
+                  const fetchingCount = mouzaTasks.filter(t => t.status === 'FETCHING_EPORCHA_TECH').length;
+                  const failedCount = mouzaTasks.filter(t => t.status === 'FAILED_RETRY').length;
+                  
+                  let status: 'QUEUED' | 'IN_PROGRESS' | 'SUCCESS' | 'FAILED' = 'QUEUED';
+                  if (failedCount > 0) status = 'FAILED';
+                  else if (fetchingCount > 0) status = 'IN_PROGRESS';
+                  else if (successCount > 0 && successCount === total) status = 'SUCCESS';
+                  else if (total > 0 && successCount < total) status = 'IN_PROGRESS';
+
+                  const badgeConfig = {
+                    SUCCESS: { label: 'SUCCESS', classes: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50' },
+                    IN_PROGRESS: { label: 'FETCHING', classes: 'bg-blue-500/20 text-blue-300 border-blue-500/50' },
+                    FAILED: { label: 'FAILED', classes: 'bg-rose-500/20 text-rose-300 border-rose-500/50' },
+                    QUEUED: { label: 'QUEUED', classes: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/50' }
+                  }[status];
+
                   return (
                     <button
                       key={mouza.id}
                       type="button"
                       onClick={() => toggleMouzaSelection(mouza.id)}
-                      className={`p-3.5 rounded-xl border text-left transition-colors flex items-start gap-3 ${
+                      className={`p-3.5 rounded-xl border text-left transition-colors flex items-start gap-3 relative group ${
                         isChecked
                           ? 'bg-slate-950 border-emerald-500/80 text-white'
                           : 'bg-slate-950/40 border-slate-800/80 text-slate-400 hover:border-slate-700'
                       }`}
                     >
+                      {/* Tooltip */}
+                      {total > 0 && (
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] px-2 py-1 rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none border border-slate-700">
+                          {successCount} of {total} tasks completed ({Math.round((successCount/total)*100)}%)
+                        </div>
+                      )}
+
+                      {/* Status Badge */}
+                      {total > 0 && (
+                        <div className={`absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-bold border ${badgeConfig.classes}`}>
+                          {badgeConfig.label}
+                        </div>
+                      )}
+
                       <div className="mt-0.5 shrink-0">
                         {isChecked ? (
                           <CheckSquare className="w-4 h-4 text-emerald-400" />

@@ -113,6 +113,8 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
         return <FileCheck2 className="w-5 h-5" />;
       case 'mouza-map':
         return <MapIcon className="w-5 h-5" />;
+      case 'khatian-index':
+        return <FileSpreadsheet className="w-5 h-5" />;
       default:
         return <FileText className="w-5 h-5" />;
     }
@@ -134,7 +136,7 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
               </span>
             </h2>
             <p className="text-xs text-slate-500">
-              নথি নির্বাচন — Full Khatian Books, Dag Index, Individual Khatians & Mouza Maps
+              নথি নির্বাচন — 6 Types of Land Records: Khatian Books, Dag Index, Individual Khatians, Namjari, Maps & Khatian Index
             </p>
           </div>
         </div>
@@ -145,19 +147,19 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
             onClick={onSelectAllAndFetch}
             disabled={disabled}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-linear-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-semibold shadow-xs hover:shadow-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            title="Auto-selects 100% Mouzas, all 5 document modes, all 5 survey types and enqueues tasks immediately"
+            title="Auto-selects 100% Mouzas, all 6 document modes, all survey types and enqueues tasks immediately"
           >
             <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-            <span>Select All 5 Modes & Auto-Fetch</span>
+            <span>Select All 6 Modes & Auto-Fetch</span>
           </button>
         )}
       </div>
 
-      {/* 1. Document Mode Selection (5 eporcha.tech endpoints) */}
+      {/* 1. Document Mode Selection (6 eporcha.tech endpoints) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <label className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
-            <span>1. Document Types ({selectedEndpoints.length}/5 Active)</span>
+            <span>1. Document Types ({selectedEndpoints.length}/6 Active)</span>
           </label>
           <div className="flex items-center gap-2">
             <button
@@ -166,7 +168,7 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
               disabled={disabled || selectedEndpoints.length === ALL_ENDPOINT_TYPES.length}
               className="text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer disabled:opacity-40 disabled:no-underline"
             >
-              Select All 5 Modes
+              Select All 6 Modes
             </button>
             <span className="text-slate-300">|</span>
             <button
@@ -180,7 +182,7 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {ALL_ENDPOINT_TYPES.map((endpoint) => {
             const meta = ENDPOINT_MODE_META[endpoint];
             const isSelected = selectedEndpoints.includes(endpoint);
