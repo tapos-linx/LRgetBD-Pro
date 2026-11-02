@@ -104,7 +104,6 @@ export default function App() {
   >({});
 
   // Union & Search Filter State
-  const [unionFilter, setUnionFilter] = useState<string>('ALL');
   const [mouzaSearch, setMouzaSearch] = useState<string>('');
 
   // Selected Mouzas & IDs (100% auto-selected on Upazila change)
@@ -201,34 +200,17 @@ export default function App() {
     return [...activeUpazila.mouzas, ...customList];
   }, [activeUpazila, customMouzasByUpazila]);
 
-  // Distinct Unions for quick filter
-  const availableUnions = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of allMouzasForUpazila) {
-      set.add(m.unionNameEn);
-    }
-    return Array.from(set);
-  }, [allMouzasForUpazila]);
-
-  // Visible Mouzas after Union & Search filtering
+  // Visible Mouzas after Search filtering
   const visibleMouzas = useMemo(() => {
-    return allMouzasForUpazila.filter((m) => {
-      if (unionFilter !== 'ALL' && m.unionNameEn !== unionFilter) {
-        return false;
-      }
-      if (!mouzaSearch.trim()) return true;
-      const q = mouzaSearch.toLowerCase();
-      return (
-        m.jlNo.toLowerCase().includes(q) ||
-        m.nameEn.toLowerCase().includes(q) ||
-        m.nameBn.includes(mouzaSearch) ||
-        m.unionNameEn.toLowerCase().includes(q) ||
-        m.unionNameBn.includes(mouzaSearch)
-      );
-    });
-  }, [allMouzasForUpazila, unionFilter, mouzaSearch]);
+    if (!mouzaSearch.trim()) return allMouzasForUpazila;
+    const q = mouzaSearch.toLowerCase();
+    return allMouzasForUpazila.filter((m) =>
+      m.jlNo.toLowerCase().includes(q) ||
+      m.nameEn.toLowerCase().includes(q) ||
+      m.nameBn.includes(mouzaSearch)
+    );
+  }, [allMouzasForUpazila, mouzaSearch]);
 
-  // Helper to rebuild the download queue for a given set of Mouzas, Endpoints & Surveys
   const syncQueueWithSelection = useCallback(
     (params: {
       div: typeof activeDivision;
@@ -281,7 +263,6 @@ export default function App() {
     const firstUpz = firstDist.upazilas[0];
     setDistrictId(firstDist.id);
     setUpazilaId(firstUpz.id);
-    setUnionFilter('ALL');
     setMouzaSearch('');
 
     const { allMouzas, selectedMouzaIds: nextSelectedIds, tasks: builtTasks } =
@@ -346,7 +327,6 @@ export default function App() {
   // 3. Cascade Handler: Upazila Change -> Immediately fetches/counts all Mouzas, auto-selects 100% without manual clicks, builds queue array, and automatically starts sequential execution from Queue Index 0!
   const handleUpazilaChange = (nextUpazilaId: string) => {
     setActiveTaskId(null);
-    setUnionFilter('ALL');
     setMouzaSearch('');
     setUpazilaId(nextUpazilaId);
 
@@ -398,10 +378,28 @@ export default function App() {
     );
   };
 
+  const handleExportMouzaMetadata = () => {
+    const exportData = selectedMouzas.map((m) => ({
+      jlNo: m.jlNo,
+      nameEn: m.nameEn,
+      nameBn: m.nameBn,
+      unionNameEn: m.unionNameEn,
+      unionNameBn: m.unionNameBn,
+    }));
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `selected_mouzas_${activeUpazila.nameEn}_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // 4. Document Type Selection Menu: "Select All" Handler -> Force clears previous selections, sets selectedMouzaIds to the full list for the active Upazila, and automatically initiates the download sequence for all 5 document modes and all survey types without additional user interaction!
   const handleSelectAllDocumentTypesAndFetch = () => {
     // 1. Force clear any previous partial/union filters or running task locks
-    setUnionFilter('ALL');
     setMouzaSearch('');
     setActiveTaskId(null);
 
@@ -533,7 +531,6 @@ export default function App() {
 
   // Select 100% of Mouzas in current Upazila and rebuild queue
   const selectAll100PercentMouzas = () => {
-    setUnionFilter('ALL');
     setMouzaSearch('');
     const allIds = allMouzasForUpazila.map((m) => m.id);
     setSelectedMouzaIds(allIds);
@@ -565,24 +562,6 @@ export default function App() {
     }
   };
 
-  // Select only visible Mouzas (e.g. 20-No Kaitala South Union)
-  const selectOnlyVisibleUnionMouzas = (targetUnion: string) => {
-    setUnionFilter(targetUnion);
-    const matchingMouzas = allMouzasForUpazila.filter(
-      (m) => targetUnion === 'ALL' || m.unionNameEn === targetUnion
-    );
-    setSelectedMouzas(matchingMouzas);
-    setSelectedMouzaIds(matchingMouzas.map((m) => m.id));
-    syncQueueWithSelection({
-      div: activeDivision,
-      dist: activeDistrict,
-      upz: activeUpazila,
-      mouzas: matchingMouzas,
-      endpoints: selectedEndpoints,
-      surveys: selectedSurveys,
-      feedbackMessage: `Filtered to ${matchingMouzas.length} Mouzas (${targetUnion}) and updated download queue.`,
-    });
-  };
 
   // Toggle Survey Type -> Immediately triggers unified download task build
   const toggleSurveyType = (srv: SurveyType) => {
@@ -1119,6 +1098,14 @@ export default function App() {
                     <Plus className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Add Custom Mouza JL</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={handleExportMouzaMetadata}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Export JSON</span>
+                  </button>
                 </div>
               </div>
 
@@ -1192,34 +1179,6 @@ export default function App() {
                   </select>
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="union-filter-select"
-                    className="block text-xs text-slate-400 mb-1 font-bn"
-                  >
-                    ৪. ইউনিয়ন ফিল্টার (Union Filter)
-                  </label>
-                  <div className="relative flex items-center">
-                    <Filter className="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
-                    <select
-                      id="union-filter-select"
-                      value={unionFilter}
-                      onChange={(e) =>
-                        selectOnlyVisibleUnionMouzas(e.target.value)
-                      }
-                      className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    >
-                      <option value="ALL">
-                        All Unions ({allMouzasForUpazila.length} Mouzas Selected)
-                      </option>
-                      {availableUnions.map((u) => (
-                        <option key={u} value={u}>
-                          {u}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
               </div>
 
               {/* Nationwide Automated Queue Monitor & Prominent Mouza Counter */}

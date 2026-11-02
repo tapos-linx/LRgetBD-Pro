@@ -1,3 +1,10 @@
+export class CancellationException extends Error {
+  constructor(message = "Task was cancelled") {
+    super(message);
+    this.name = "CancellationException";
+  }
+}
+
 import JSZip from 'jszip';
 import {
   BookStyleConfig,
@@ -165,6 +172,59 @@ export function resetAllTasksToQueued(tasks: QueueTask[]): QueueTask[] {
   }));
 }
 
+export async function processSingleQueueTaskWithRetry(
+  task: QueueTask,
+  proxyConfig: ProxyConfig,
+  maxRetries = 3
+): Promise<{ updatedTask: QueueTask; extractedCount: number }> {
+  let currentAttempt = 0;
+  let lastOutcome: { updatedTask: QueueTask; extractedCount: number } | null = null;
+
+  while (currentAttempt < maxRetries) {
+    currentAttempt++;
+    try {
+      const outcome = await processSingleQueueTask(task, proxyConfig);
+      
+      // If success, return immediately
+      if (
+        outcome.updatedTask.status === 'CACHED_INDEXEDDB' ||
+        outcome.updatedTask.status === 'HTML_INDEX_EXTRACTED'
+      ) {
+        return outcome;
+      }
+
+      // If it's a permanent failure, return outcome
+      if (outcome.updatedTask.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH') {
+        return outcome;
+      }
+      
+      lastOutcome = outcome;
+      
+      // If not successful, wait with exponential backoff before retrying
+      if (currentAttempt < maxRetries) {
+        const delayMs = currentAttempt * 2000;
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    } catch (error) {
+      if (error instanceof CancellationException) throw error;
+      console.error(`Attempt ${currentAttempt} failed for task ${task.id}:`, error);
+      if (currentAttempt >= maxRetries) {
+        lastOutcome = {
+            updatedTask: {
+                ...task,
+                status: 'FAILED_RETRY',
+                errorMessage: error instanceof Error ? error.message : 'Unknown error',
+                updatedAt: new Date().toISOString(),
+            },
+            extractedCount: 0
+        };
+      }
+    }
+  }
+
+  return lastOutcome || { updatedTask: task, extractedCount: 0 };
+}
+
 export async function processSingleQueueTask(
   task: QueueTask,
   proxyConfig: ProxyConfig
@@ -288,6 +348,7 @@ export async function processSingleQueueTask(
     extractedCount: 0,
   };
 }
+
 
 export function generateManifestAuditCsv(tasks: QueueTask[]): string {
   const headers = [

@@ -1,16 +1,26 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+@theme {
+  --color-brand-indigo: #2731F1;
+  --color-accent-pink: #C84353;
+  --color-text-primary: #1A1A24;
+  --color-text-secondary: #685858;
+  --color-app-bg: #FFFFFF;
+  --color-surface-bg: #F4F6F9;
+}
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', 'Hind Siliguri', system-ui, -apple-system, sans-serif;
-    --font-bn: 'Hind Siliguri', 'Plus Jakarta Sans', sans-serif;
+    --font-sans: 'Poppins', system-ui, -apple-system, sans-serif;
+    --font-bn: 'Hind Siliguri', 'Poppins', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
   body {
+    background-color: var(--color-app-bg);
+    color: var(--color-text-primary);
     font-family: var(--font-sans);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
 

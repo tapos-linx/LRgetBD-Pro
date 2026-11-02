@@ -1,4 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import * as cheerio from 'cheerio';
+
 import {
   BinaryValidationResult,
   ProxyConfig,
@@ -132,7 +134,20 @@ export async function fetchFromEporchaTech(
       };
     }
     requestUrl = `${base}${encodeURIComponent(task.targetUrl)}`;
+  } else if (activeTransport === 'SCRAPFLY') {
+    const apiKey = import.meta.env.VITE_SCRAPFLY_API_KEY;
+    if (!apiKey) {
+      return {
+        ok: false,
+        httpStatus: 0,
+        transportUsed: 'SCRAPFLY',
+        errorMessage: 'Scrapfly API key not configured.',
+      };
+    }
+    const encodedTargetUrl = encodeURIComponent(task.targetUrl);
+    requestUrl = `https://api.scrapfly.io/scrape?key=${apiKey}&url=${encodedTargetUrl}&format=raw&proxy_pool=public_residential_pool`;
   }
+
 
   try {
     const response = await fetch(requestUrl, {
@@ -194,3 +209,55 @@ export async function checkEporchaPortalHealth(): Promise<{
     };
   }
 }
+
+export async function extractPdfUrl(
+  mouza: string,
+  docType: string,
+  portalPageUrl: string
+): Promise<string> {
+  const apiKey = import.meta.env.VITE_SCRAPFLY_API_KEY;
+  if (!apiKey) {
+    throw new Error('Scrapfly API key not configured.');
+  }
+
+  const encodedTargetUrl = encodeURIComponent(portalPageUrl);
+  const scrapflyUrl = `https://api.scrapfly.io/scrape?key=${apiKey}&url=${encodedTargetUrl}&render_js=true&proxy_pool=public_residential_pool`;
+
+  const response = await fetch(scrapflyUrl);
+  if (!response.ok) {
+    throw new Error(`Scrapfly HTML fetch failed: HTTP ${response.status}`);
+  }
+
+  const jsonResponse = await response.json();
+  const rawHtml = jsonResponse.result.content;
+
+  const $ = cheerio.load(rawHtml);
+  const anchorTags = $('a[href]');
+
+  let targetPdfUrl: string | null = null;
+
+  anchorTags.each((_, el) => {
+    const linkText = $(el).text().trim();
+    const href = $(el).attr('href') || '';
+    const className = $(el).attr('class') || '';
+
+    const isTargetDoc =
+      linkText.toLowerCase().includes(docType.toLowerCase()) ||
+      href.toLowerCase().includes(docType.toLowerCase()) ||
+      className.includes('download-pdf');
+
+    if (isTargetDoc && href.toLowerCase().endsWith('.pdf')) {
+      targetPdfUrl = href.startsWith('http')
+        ? href
+        : `https://www.target-land-portal.gov.bd${href}`;
+      return false; // Stop searching
+    }
+  });
+
+  if (!targetPdfUrl) {
+    throw new Error(`Could not find the ${docType} PDF link in the HTML for Mouza ${mouza}`);
+  }
+
+  return targetPdfUrl;
+}
+

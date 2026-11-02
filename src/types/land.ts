@@ -76,6 +76,7 @@ export type TransportMode =
   | 'SERVER_EXPRESS_RELAY'
   | 'TERMUX_LOCAL_PROXY'
   | 'CLOUDFLARE_WORKER_PROXY'
+  | 'SCRAPFLY'
   | 'DIRECT_BROWSER_FETCH';
 
 export interface QueueTask {
