@@ -1,20 +1,31 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Archive,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
   CheckCircle2,
   Download,
   ExternalLink,
   FileEdit,
   FileSpreadsheet,
+  GripVertical,
   Pause,
   Play,
   RefreshCw,
   RotateCcw,
   Server,
   ShieldAlert,
+  ShieldCheck,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { ProxyConfig, QueueTask, TransportMode } from '../types/land';
+import {
+  computeDocumentTypeSizeStats,
+  evaluateTaskSizeIntegrity,
+} from '../services/queueEngine';
 
 interface QueueConsoleViewProps {
   tasks: QueueTask[];
@@ -31,6 +42,9 @@ interface QueueConsoleViewProps {
   onExportCsv: () => void;
   onDownloadIndividual?: (task: QueueTask) => void;
   onOpenBatchRenameModal?: () => void;
+  onReorderTasks?: (sourceTaskId: string, targetTaskId: string) => void;
+  onMoveTaskPriority?: (taskId: string, direction: 'UP' | 'DOWN' | 'TOP') => void;
+  onPrioritizeMouza?: (mouzaId: string) => void;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
 }
@@ -41,6 +55,7 @@ const TRANSPORT_LABELS: Record<TransportMode, string> = {
   TERMUX_LOCAL_PROXY: 'Termux Local Relay (127.0.0.1:8787)',
   CLOUDFLARE_WORKER_PROXY: 'Custom Cloudflare Worker Relay',
   DIRECT_BROWSER_FETCH: 'Direct Browser Fetch (CORS-Restricted)',
+  SCRAPFLY: 'Scrapfly Residential Proxy Pool',
 };
 
 export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
@@ -58,10 +73,68 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   onExportCsv,
   onDownloadIndividual,
   onOpenBatchRenameModal,
+  onReorderTasks,
+  onMoveTaskPriority,
+  onPrioritizeMouza,
   isBundlingZip,
   lastBundleStatus,
 }) => {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
+  const [priorityFeedback, setPriorityFeedback] = useState<string | null>(null);
+
+  // Unique Mouzas in the current queue for 1-click Mouza prioritization
+  const uniqueMouzasInQueue = useMemo(() => {
+    const map = new Map<
+      string,
+      { mouzaId: string; jlNo: string; nameBn: string; nameEn: string; queuedCount: number }
+    >();
+    for (const t of tasks) {
+      const existing = map.get(t.mouzaId);
+      if (existing) {
+        if (t.status === 'QUEUED') existing.queuedCount += 1;
+      } else {
+        map.set(t.mouzaId, {
+          mouzaId: t.mouzaId,
+          jlNo: t.mouzaJlNo,
+          nameBn: t.mouzaNameBn,
+          nameEn: t.mouzaNameEn,
+          queuedCount: t.status === 'QUEUED' ? 1 : 0,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [tasks]);
+
+  // Cross-reference downloaded file sizes against document-type average sizes
+  const docTypeSizeStats = useMemo(
+    () => computeDocumentTypeSizeStats(tasks),
+    [tasks]
+  );
+
+  const taskIntegrityMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof evaluateTaskSizeIntegrity>>();
+    for (const t of tasks) {
+      map.set(t.id, evaluateTaskSizeIntegrity(t, docTypeSizeStats));
+    }
+    return map;
+  }, [tasks, docTypeSizeStats]);
+
+  const integrityFlaggedCount = useMemo(() => {
+    let count = 0;
+    for (const t of tasks) {
+      const check = taskIntegrityMap.get(t.id);
+      if (
+        check &&
+        (check.status === 'PARTIAL_SUSPECT' ||
+          check.status === 'CORRUPTED_OR_TRUNCATED')
+      ) {
+        count++;
+      }
+    }
+    return count;
+  }, [tasks, taskIntegrityMap]);
 
   const queuedCount = tasks.filter((t) => t.status === 'QUEUED').length;
   const verifiedCount = tasks.filter((t) => t.pdfVerified).length;
@@ -80,6 +153,13 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
     if (statusFilter === 'VERIFIED') return t.pdfVerified;
     if (statusFilter === 'QUEUED') return t.status === 'QUEUED';
     if (statusFilter === 'INDEX') return t.status === 'HTML_INDEX_EXTRACTED';
+    if (statusFilter === 'INTEGRITY_FLAGGED') {
+      const check = taskIntegrityMap.get(t.id);
+      return (
+        check?.status === 'PARTIAL_SUSPECT' ||
+        check?.status === 'CORRUPTED_OR_TRUNCATED'
+      );
+    }
     if (statusFilter === 'ATTENTION')
       return (
         t.status === 'CORS_BRIDGE_REQUIRED' ||
@@ -305,13 +385,17 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             { id: 'QUEUED', label: `Queued (${queuedCount})` },
             { id: 'VERIFIED', label: `Verified %PDF- (${verifiedCount})` },
             { id: 'INDEX', label: `HTML Index Extracted (${extractedIndexCount})` },
+            {
+              id: 'INTEGRITY_FLAGGED',
+              label: `Integrity Flagged (${integrityFlaggedCount})`,
+            },
             { id: 'ATTENTION', label: `Portal HTML / Non-PDF (${failedOrBlockedCount})` },
           ].map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setStatusFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 statusFilter === tab.id
                   ? 'bg-emerald-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -326,6 +410,53 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
           Showing {filteredTasks.length} of {tasks.length} tasks
         </div>
       </div>
+
+      {/* Mouza Priority Bar & Drag-and-Drop Reorder Instructions */}
+      {tasks.length > 0 && (
+        <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="text-xs font-semibold text-white">
+                Prioritize Mouzas in Queue (Drag &amp; Drop Rows or Click Mouza Below — Preserves Queue &amp; Cache)
+              </span>
+            </div>
+            {priorityFeedback && (
+              <span className="text-xs text-emerald-400 font-mono-tabular">
+                {priorityFeedback}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1.5">
+            {uniqueMouzasInQueue.map((m, idx) => (
+              <button
+                key={m.mouzaId}
+                type="button"
+                onClick={() => {
+                  if (onPrioritizeMouza) {
+                    onPrioritizeMouza(m.mouzaId);
+                    setPriorityFeedback(
+                      `Prioritized JL-${m.jlNo} (${m.nameEn}) to front of pending download queue.`
+                    );
+                  }
+                }}
+                title={`Move all queued tasks for JL-${m.jlNo} ${m.nameEn} to top priority without clearing queue`}
+                className={`shrink-0 px-3 py-1.5 rounded-lg border text-xs font-mono-tabular flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  idx === 0
+                    ? 'bg-emerald-950/80 border-emerald-500/70 text-emerald-200'
+                    : 'bg-slate-950 border-slate-800 hover:border-emerald-500/60 text-slate-300 hover:text-white'
+                }`}
+              >
+                <ArrowUpToLine className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span className="font-bold text-emerald-400">JL-{m.jlNo}</span>
+                <span className="font-bn">{m.nameBn}</span>
+                <span className="text-slate-400">({m.nameEn})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Queue Table */}
       {filteredTasks.length === 0 ? (
@@ -343,23 +474,127 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-semibold text-slate-400">
-                  <th className="py-3 px-4">Mouza & Survey</th>
-                  <th className="py-3 px-4">Forensic Filename & Mode</th>
+                  <th className="py-3 px-3 w-24">Priority / Drag</th>
+                  <th className="py-3 px-4">Mouza &amp; Survey</th>
+                  <th className="py-3 px-4">Forensic Filename &amp; Mode</th>
                   <th className="py-3 px-4">Verification Status</th>
-                  <th className="py-3 px-4 text-right">HTTP & Magic Hex</th>
-                  <th className="py-3 px-4 text-right">Size</th>
+                  <th className="py-3 px-4 text-right">HTTP &amp; Magic Hex</th>
+                  <th className="py-3 px-4 text-right">Size &amp; Integrity Check</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/70 text-xs">
                 {filteredTasks.map((task) => {
+                  const globalIdx = tasks.findIndex((t) => t.id === task.id);
                   const isCurrentlyFetching =
                     activeTaskId === task.id || task.status === 'FETCHING_EPORCHA_TECH';
+                  const isDragged = draggedTaskId === task.id;
+                  const isDragOver = dragOverTaskId === task.id && draggedTaskId !== task.id;
+                  const integrity =
+                    taskIntegrityMap.get(task.id) ||
+                    evaluateTaskSizeIntegrity(task, docTypeSizeStats);
+
                   return (
                     <tr
                       key={task.id}
-                      className="hover:bg-slate-800/40 transition-colors"
+                      draggable={Boolean(onReorderTasks)}
+                      onDragStart={(e) => {
+                        setDraggedTaskId(task.id);
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', task.id);
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverTaskId !== task.id) {
+                          setDragOverTaskId(task.id);
+                        }
+                      }}
+                      onDragLeave={() => {
+                        if (dragOverTaskId === task.id) {
+                          setDragOverTaskId(null);
+                        }
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const sourceId =
+                          draggedTaskId || e.dataTransfer.getData('text/plain');
+                        setDraggedTaskId(null);
+                        setDragOverTaskId(null);
+                        if (sourceId && sourceId !== task.id && onReorderTasks) {
+                          onReorderTasks(sourceId, task.id);
+                          setPriorityFeedback(
+                            `Reordered queue priority without clearing tasks.`
+                          );
+                        }
+                      }}
+                      onDragEnd={() => {
+                        setDraggedTaskId(null);
+                        setDragOverTaskId(null);
+                      }}
+                      className={`transition-colors ${
+                        isDragged
+                          ? 'opacity-50 bg-slate-800/70'
+                          : isDragOver
+                          ? 'bg-emerald-950/60 border-t-2 border-t-emerald-400'
+                          : 'hover:bg-slate-800/40'
+                      }`}
                     >
+                      <td className="py-3.5 px-3 align-top font-mono-tabular">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            title="Drag row to reorder queue processing priority"
+                            className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-emerald-400 p-1 rounded hover:bg-slate-800"
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-[11px] font-bold text-emerald-400">
+                            #{globalIdx + 1}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 mt-1.5">
+                          {onMoveTaskPriority && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onMoveTaskPriority(task.id, 'TOP');
+                                  setPriorityFeedback(
+                                    `Moved JL-${task.mouzaJlNo} (${task.mouzaNameEn} · ${task.surveyType}) to top priority.`
+                                  );
+                                }}
+                                disabled={globalIdx <= 0}
+                                title="Prioritize to Top of Queue"
+                                aria-label={`Prioritize ${task.mouzaNameEn} ${task.surveyType} to top of queue`}
+                                className="p-1 rounded bg-slate-800 hover:bg-emerald-600/30 text-slate-300 hover:text-emerald-300 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowUpToLine className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onMoveTaskPriority(task.id, 'UP')}
+                                disabled={globalIdx <= 0}
+                                title="Move Up One Position"
+                                aria-label={`Move ${task.mouzaNameEn} ${task.surveyType} up`}
+                                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowUp className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onMoveTaskPriority(task.id, 'DOWN')}
+                                disabled={globalIdx >= tasks.length - 1}
+                                title="Move Down One Position"
+                                aria-label={`Move ${task.mouzaNameEn} ${task.surveyType} down`}
+                                className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 cursor-pointer"
+                              >
+                                <ArrowDown className="w-3 h-3" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+
                       <td className="py-3.5 px-4 align-top">
                         <div className="font-semibold text-white font-bn">
                           JL-{task.mouzaJlNo} · {task.mouzaNameBn} ({task.mouzaNameEn})
@@ -419,14 +654,93 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 align-top text-right font-mono-tabular text-slate-200">
-                        {task.byteLength !== undefined
-                          ? `${(task.byteLength / 1024).toFixed(1)} KB`
-                          : '—'}
+                      <td className="py-3.5 px-4 align-top text-right font-mono-tabular">
+                        <div className="text-slate-200 font-semibold">
+                          {task.byteLength !== undefined
+                            ? `${(task.byteLength / 1024).toFixed(1)} KB`
+                            : '—'}
+                        </div>
+
+                        {/* Visual Integrity Check Badge Cross-Referencing Document-Type Average */}
+                        <div className="mt-1 flex flex-col items-end gap-0.5">
+                          {integrity.status === 'INTEGRITY_VERIFIED' && (
+                            <span
+                              data-testid="integrity-check-badge"
+                              data-integrity-status="INTEGRITY_VERIFIED"
+                              title={integrity.reason}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[10px] font-semibold"
+                            >
+                              <ShieldCheck className="w-3 h-3 text-emerald-400 shrink-0" />
+                              <span>{integrity.label}</span>
+                            </span>
+                          )}
+
+                          {integrity.status === 'PARTIAL_SUSPECT' && (
+                            <span
+                              data-testid="integrity-check-badge"
+                              data-integrity-status="PARTIAL_SUSPECT"
+                              title={integrity.reason}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[10px] font-semibold"
+                            >
+                              <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
+                              <span>{integrity.label}</span>
+                            </span>
+                          )}
+
+                          {integrity.status === 'CORRUPTED_OR_TRUNCATED' && (
+                            <span
+                              data-testid="integrity-check-badge"
+                              data-integrity-status="CORRUPTED_OR_TRUNCATED"
+                              title={integrity.reason}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[10px] font-semibold"
+                            >
+                              <ShieldAlert className="w-3 h-3 text-rose-400 shrink-0" />
+                              <span>{integrity.label}</span>
+                            </span>
+                          )}
+
+                          {integrity.status === 'PENDING' && (
+                            <span
+                              data-testid="integrity-check-badge"
+                              data-integrity-status="PENDING"
+                              title={integrity.reason}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700 text-slate-400 text-[10px]"
+                            >
+                              <span>
+                                Avg ~{(integrity.averageBytes / 1024).toFixed(0)} KB
+                              </span>
+                            </span>
+                          )}
+
+                          {integrity.status !== 'PENDING' && (
+                            <span className="text-[10px] text-slate-400">
+                              {integrity.deviationPercent >= 0
+                                ? `+${integrity.deviationPercent}%`
+                                : `${integrity.deviationPercent}%`}{' '}
+                              vs {(integrity.averageBytes / 1024).toFixed(1)} KB avg
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-3.5 px-4 align-top text-right">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                          {onPrioritizeMouza && task.status === 'QUEUED' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onPrioritizeMouza(task.mouzaId);
+                                setPriorityFeedback(
+                                  `Prioritized all tasks for JL-${task.mouzaJlNo} (${task.mouzaNameEn}) to top of queue.`
+                                );
+                              }}
+                              title={`Prioritize all tasks for Mouza JL-${task.mouzaJlNo} (${task.mouzaNameEn})`}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                            >
+                              <ArrowUpToLine className="w-3 h-3" />
+                              <span>Prioritize Mouza</span>
+                            </button>
+                          )}
                           {onDownloadIndividual && (task.pdfVerified || (task.byteLength && task.byteLength > 0)) && (
                             <button
                               type="button"

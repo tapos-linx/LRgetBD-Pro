@@ -24,7 +24,7 @@ interface NationwideQueueMonitorProps {
   activeTaskId: string | null;
   onToggleQueue: () => void;
   onRestartQueue: () => void;
-  onSelectMouza?: (mouzaId: string) => void;
+  onPrioritizeMouza?: (mouzaId: string) => void;
 }
 
 export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
@@ -38,10 +38,23 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
   activeTaskId,
   onToggleQueue,
   onRestartQueue,
+  onPrioritizeMouza,
 }) => {
   // Find current running task and its index in the tasks list
   const activeTaskIndex = tasks.findIndex((t) => t.id === activeTaskId);
-  const activeTask = activeTaskIndex >= 0 ? tasks[activeTaskIndex] : null;
+  const nextQueuedIndex = tasks.findIndex((t) => t.status === 'QUEUED');
+  const displayIndex =
+    activeTaskIndex >= 0
+      ? activeTaskIndex
+      : nextQueuedIndex >= 0
+      ? nextQueuedIndex
+      : 0;
+  const activeTask =
+    activeTaskIndex >= 0
+      ? tasks[activeTaskIndex]
+      : nextQueuedIndex >= 0
+      ? tasks[nextQueuedIndex]
+      : tasks[0] || null;
 
   // Group tasks or calculate stats
   const completedCount = tasks.filter(
@@ -79,8 +92,8 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
                 {totalMouzasCount}
               </span>
             </h3>
-            <span className="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/30 text-xs font-medium">
-              100% Auto-Selected ({selectedMouzas.length}/{totalMouzasCount})
+            <span className="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
+              Auto-Selected ({selectedMouzas.length}/{totalMouzasCount})
             </span>
           </div>
 
@@ -89,33 +102,31 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
           </p>
         </div>
 
-        {/* Quick Execution Status & Primary Controls */}
+        {/* Quick Execution Status & Operational Controls: Pause, Resume, Reset to Index 0 */}
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             type="button"
             onClick={onToggleQueue}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md cursor-pointer ${
               isQueueRunning
                 ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
-                : isFinished
-                ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
             }`}
           >
             {isQueueRunning ? (
               <>
                 <Pause className="w-3.5 h-3.5" />
-                <span>Pause Queue</span>
+                <span>Pause</span>
               </>
             ) : isFinished ? (
               <>
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>All Finished · Rerun</span>
+                <span>Resume / Rerun</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Start Queue (from Index 0)</span>
+                <span>{completedCount > 0 ? 'Resume' : 'Resume / Start Queue'}</span>
               </>
             )}
           </button>
@@ -123,7 +134,7 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
           <button
             type="button"
             onClick={onRestartQueue}
-            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors"
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Reset and start from Queue Index 0"
           >
             <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
@@ -135,31 +146,39 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
       {/* 2. Active Queue Execution Tracker Bar */}
       <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 font-mono-tabular">
-            <span className="text-slate-400">Sequential Execution:</span>
+          <div className="flex flex-wrap items-center gap-2 font-mono-tabular">
+            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-emerald-300 font-bold">
+              Index {displayIndex} of {tasks.length}
+            </span>
             {isQueueRunning && activeTask ? (
               <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                Processing Mouza Index {activeTaskIndex} of {tasks.length} · JL-{activeTask.mouzaJlNo} ({activeTask.mouzaNameEn})
+                Active: JL-{activeTask.mouzaJlNo} · {activeTask.mouzaNameBn} ({activeTask.mouzaNameEn})
               </span>
             ) : isFinished ? (
               <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                 Queue Completed: All {totalMouzasCount} Mouzas Processed Successfully
               </span>
+            ) : activeTask ? (
+              <span className="text-slate-300">
+                Active Target: JL-{activeTask.mouzaJlNo} · {activeTask.mouzaNameBn} ({activeTask.mouzaNameEn})
+              </span>
             ) : (
               <span className="text-slate-400">
-                Ready to execute · Next: Queue Index 0 (1st Mouza)
+                Ready to execute · Next: Index 0 (1st Mouza)
               </span>
             )}
           </div>
 
           <div className="text-slate-300 font-mono-tabular font-medium">
-            Progress: <span className="text-emerald-400 font-bold">{completedCount}</span> / {tasks.length} Tasks ({completionPercent}%)
+            Completion Counter:{' '}
+            <span className="text-emerald-400 font-bold">{completedCount}</span> /{' '}
+            {tasks.length} Tasks ({completionPercent}%)
           </div>
         </div>
 
-        {/* Progress Bar */}
+        {/* Real-Time Visual Progress Bar */}
         <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
           <div
             className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
@@ -185,7 +204,7 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
             )}
           </div>
           <div>
-            Sequential Loop: Index 0 → {tasks.length > 0 ? tasks.length - 1 : 0}
+            Sequential Loop: Index 0 → {tasks.length > 0 ? tasks.length - 1 : 0} (Polite Jitter Delay Active)
           </div>
         </div>
       </div>
@@ -198,13 +217,12 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
             <span>Processing Queue Array ({selectedMouzas.length} Mouzas × Document Tasks)</span>
           </span>
           <span className="text-[11px] font-mono-tabular text-slate-400">
-            Auto-starts at Queue Index 0 · Loops to completion
+            Click any Mouza below to prioritize it to the front of the queue
           </span>
         </div>
 
         <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
           {selectedMouzas.map((mouza, idx) => {
-            // Find corresponding task for this mouza
             const task = tasks.find((t) => t.mouzaId === mouza.id);
             const isCurrent = activeTask && activeTask.mouzaId === mouza.id;
             const isDone =
@@ -213,14 +231,17 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
                 task.status === 'HTML_INDEX_EXTRACTED');
 
             return (
-              <div
+              <button
                 key={mouza.id}
-                className={`shrink-0 px-3 py-2 rounded-xl border text-xs font-mono-tabular transition-all ${
+                type="button"
+                onClick={() => onPrioritizeMouza && onPrioritizeMouza(mouza.id)}
+                title={`Click to prioritize JL-${mouza.jlNo} ${mouza.nameEn} in the download queue`}
+                className={`shrink-0 px-3 py-2 rounded-xl border text-left text-xs font-mono-tabular transition-all cursor-pointer ${
                   isCurrent
                     ? 'bg-emerald-950/80 border-emerald-400 text-white shadow-lg ring-1 ring-emerald-400/50'
                     : isDone
                     ? 'bg-slate-900/90 border-emerald-500/40 text-emerald-300'
-                    : 'bg-slate-950/60 border-slate-800 text-slate-400'
+                    : 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/60 text-slate-400 hover:text-white'
                 }`}
               >
                 <div className="flex items-center gap-1.5 mb-0.5">
@@ -243,7 +264,7 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
                 <div className="text-[10px] text-slate-400 truncate max-w-[120px] font-bn">
                   {mouza.nameBn}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>

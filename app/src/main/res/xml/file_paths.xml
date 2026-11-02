@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Grants FileProvider access to temporary .zip archives generated in context.cacheDir -->
+    <cache-path name="shared_zips" path="." />
+    <external-path name="external_downloads" path="Download/LRgetBD-Pro/" />
+</paths>

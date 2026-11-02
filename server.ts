@@ -2,15 +2,48 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from "@google/genai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
+  }
+});
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json({ limit: '10mb' }));
+
+  // Grounding Verification Route
+  app.post('/api/gemini/verify-status', async (req, res) => {
+    const { query } = req.body;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: query || "What is the latest status of eporcha.tech and DLRMS services?",
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      res.status(200).json({
+        text: response.text,
+        groundingMetadata: response.candidates?.[0]?.groundingMetadata,
+      });
+    } catch (error) {
+      console.error('Gemini API Error:', error);
+      res.status(500).json({ error: 'Failed to verify status' });
+    }
+  });
+
 
   // Real HTTP check to https://eporcha.tech
   app.get('/api/eporcha-health', async (_req, res) => {

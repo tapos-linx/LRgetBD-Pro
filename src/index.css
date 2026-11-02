@@ -2,12 +2,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
 
 @theme {
+  /* Primary Brand Colors */
   --color-brand-indigo: #2731F1;
   --color-accent-pink: #C84353;
+  --color-deep-red: #C6172A;
+
+  /* Backgrounds & Surfaces */
+  --color-app-bg: #FFFFFF;
+  --color-background-white: #FFFFFF;
+  --color-surface-bg: #F4F6F9;
+  --color-surface-off-white: #F4F6F9;
+  --color-surface-pastel-blue: #EFEFFE;
+  --color-surface-pastel-yellow: #FFF8EB;
+  --color-surface-pastel-green: #ECF9F5;
+
+  /* Typography Colors */
   --color-text-primary: #1A1A24;
   --color-text-secondary: #685858;
-  --color-app-bg: #FFFFFF;
-  --color-surface-bg: #F4F6F9;
+
+  /* Functional / Semantic Overrides */
+  --color-white-transparent-20: #FFFFFF33;
+  --color-indigo-transparent-30: #2731F14D;
 }
 
 @layer base {
@@ -47,4 +62,21 @@
 .workspace-view-enter {
   animation: workspaceViewFadeIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Colored glowing drop-shadows matching Compose Modifier.coloredGlow(alpha=0.3f, borderRadius=28.dp, blurRadius=20.dp, offsetY=10.dp, offsetX=0.dp) */
+.colored-glow-indigo {
+  border-radius: 28px;
+  box-shadow: 0px 10px 20px rgba(39, 49, 241, 0.3);
+}
+
+.colored-glow-pink {
+  border-radius: 28px;
+  box-shadow: 0px 10px 20px rgba(200, 67, 83, 0.3);
+}
+
+.colored-glow-red {
+  border-radius: 28px;
+  box-shadow: 0px 10px 20px rgba(198, 23, 42, 0.3);
+}
+
 

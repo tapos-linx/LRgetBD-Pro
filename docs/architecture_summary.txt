@@ -1,0 +1,20 @@
+# LRgetBD Pro Architectural Documents
+
+## 01_PRD.md
+Core Objective: Free bulk extraction from eporcha.tech.
+Targets: Brahmanbaria (Nabinagar), Cumilla.
+
+## 02_AppFlow.md
+States: GEO_INIT -> UPAZILA_SELECTED -> QUEUE_ACTIVE -> ARCHIVE_READY.
+
+## 03_UI_Spec.md
+Material Design 3, Dark Slate & Emerald palette, Bilingual support.
+
+## 04_TRD.md
+CapacitorHttp for Android native transport, binary magic-byte verification gate.
+
+## 05_Schema.md
+IndexedDB (lr_eporcha_blobs_v2), LocalStorage (queue), GeoHierarchy (Brahmanbaria/Cumilla).
+
+## 06_Plan.md
+4-Phase Roadmap: Setup -> Client/Validator -> Queue/UI -> Deployment.

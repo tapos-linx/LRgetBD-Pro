@@ -60,7 +60,11 @@ import {
   calculatePoliteJitterDelay,
   calculateQueueProgress,
   generateManifestAuditCsv,
+  moveQueueTaskByOffset,
+  prioritizeMouzaInQueue,
   processSingleQueueTask,
+  reorderQueueTasks,
+  requeueIntegrityFlaggedTasks,
   resetAllTasksToQueued,
   retryFailedTasks,
 } from './services/queueEngine';
@@ -75,10 +79,12 @@ import { GoogleDriveSyncModal } from './components/GoogleDriveSyncModal';
 import { GlobalProgressBar } from './components/GlobalProgressBar';
 import { NationwideQueueMonitor } from './components/NationwideQueueMonitor';
 import { QueueConsoleView } from './components/QueueConsoleView';
+import { PortalAlertsView } from './components/PortalAlertsView';
+import { IntegrityHealthView } from './components/IntegrityHealthView';
 import { TabularIndexView } from './components/TabularIndexView';
 import { ArchitectureDocsView } from './components/ArchitectureDocsView';
 
-type ActiveWorkspaceTab = 'extractor' | 'queue' | 'index' | 'docs';
+type ActiveWorkspaceTab = 'extractor' | 'queue' | 'integrity' | 'index' | 'docs';
 
 export default function App() {
   // Navigation & Modal State
@@ -297,7 +303,6 @@ export default function App() {
       activeDivision.districts[0];
     const firstUpz = nextDist.upazilas[0];
     setUpazilaId(firstUpz.id);
-    setUnionFilter('ALL');
     setMouzaSearch('');
 
     const { allMouzas, selectedMouzaIds: nextSelectedIds, tasks: builtTasks } =
@@ -529,23 +534,7 @@ export default function App() {
     allMouzasForUpazila.length > 0 &&
     allMouzasForUpazila.every((m) => selectedMouzaIds.includes(m.id));
 
-  // Select 100% of Mouzas in current Upazila and rebuild queue
-  const selectAll100PercentMouzas = () => {
-    setMouzaSearch('');
-    const allIds = allMouzasForUpazila.map((m) => m.id);
-    setSelectedMouzaIds(allIds);
-    syncQueueWithSelection({
-      div: activeDivision,
-      dist: activeDistrict,
-      upz: activeUpazila,
-      mouzas: allMouzasForUpazila,
-      endpoints: selectedEndpoints,
-      surveys: selectedSurveys,
-      feedbackMessage: `Selected all ${allMouzasForUpazila.length} Mouzas (100%) in ${activeUpazila.nameEn} and updated download queue.`,
-    });
-  };
-
-  // Toggle Switch Handler: Select / Deselect All Mouzas for the current Upazila
+  // Toggle Control: Select / Deselect All Mouzas for the current Upazila (overrides default auto-selection if needed)
   const handleToggleSelectDeselectAllMouzas = () => {
     if (areAllMouzasSelected) {
       setIsQueueRunning(false);
@@ -555,12 +544,62 @@ export default function App() {
       setTasks([]);
       savePersistedQueue([]);
       setEnqueueFeedback(
-        `Deselected all Mouzas in ${activeUpazila.nameEn} (0/${allMouzasForUpazila.length}). Select specific Mouzas manually or toggle 'Select/Deselect All' back ON.`
+        `Deselected all Mouzas in ${activeUpazila.nameEn} (0/${allMouzasForUpazila.length}). Click 'Select / Deselect All' to restore all ${allMouzasForUpazila.length} Mouzas.`
       );
     } else {
-      selectAll100PercentMouzas();
+      setMouzaSearch('');
+      const allIds = allMouzasForUpazila.map((m) => m.id);
+      setSelectedMouzaIds(allIds);
+      syncQueueWithSelection({
+        div: activeDivision,
+        dist: activeDistrict,
+        upz: activeUpazila,
+        mouzas: allMouzasForUpazila,
+        endpoints: selectedEndpoints,
+        surveys: selectedSurveys,
+        feedbackMessage: `All ${allMouzasForUpazila.length} Mouzas in ${activeUpazila.nameEn} selected and synchronized with the download queue.`,
+      });
     }
   };
+
+  // Reorder queue rows via drag-and-drop without clearing the queue
+  const handleReorderTasks = useCallback(
+    (sourceTaskId: string, targetTaskId: string) => {
+      setTasks((prev) => {
+        const reordered = reorderQueueTasks(prev, sourceTaskId, targetTaskId);
+        savePersistedQueue(reordered);
+        return reordered;
+      });
+    },
+    []
+  );
+
+  // Move a specific task UP, DOWN, or to TOP priority without clearing the queue
+  const handleMoveTaskPriority = useCallback(
+    (taskId: string, direction: 'UP' | 'DOWN' | 'TOP') => {
+      setTasks((prev) => {
+        const reordered = moveQueueTaskByOffset(prev, taskId, direction);
+        savePersistedQueue(reordered);
+        return reordered;
+      });
+    },
+    []
+  );
+
+  // Prioritize all tasks for a specific Mouza to the front of the pending queue without clearing the queue
+  const handlePrioritizeMouza = useCallback((mouzaId: string) => {
+    setTasks((prev) => {
+      const reordered = prioritizeMouzaInQueue(prev, mouzaId);
+      savePersistedQueue(reordered);
+      return reordered;
+    });
+    const targetMouza = allMouzasForUpazila.find((m) => m.id === mouzaId);
+    if (targetMouza) {
+      setEnqueueFeedback(
+        `Prioritized Mouza JL-${targetMouza.jlNo} (${targetMouza.nameBn} · ${targetMouza.nameEn}) to the front of the processing queue without clearing existing tasks.`
+      );
+    }
+  }, [allMouzasForUpazila]);
 
 
   // Toggle Survey Type -> Immediately triggers unified download task build
@@ -717,6 +756,45 @@ export default function App() {
 
   // Sequential Queue Loop with 600ms-1200ms Polite Delay Jitter
   const queueStepCounterRef = useRef(0);
+  const queuePreviewContainerRef = useRef<HTMLDivElement | null>(null);
+  const activePreviewRowRef = useRef<HTMLTableRowElement | null>(null);
+  const [autoScrollPreview, setAutoScrollPreview] = useState(true);
+
+  // Track the currently active task ID (or the immediately upcoming queued task while running)
+  const currentTrackedTaskId = useMemo(() => {
+    if (activeTaskId) return activeTaskId;
+    const fetchingTask = tasks.find((t) => t.status === 'FETCHING_EPORCHA_TECH');
+    if (fetchingTask) return fetchingTask.id;
+    if (isQueueRunning) {
+      const nextQueued = tasks.find((t) => t.status === 'QUEUED');
+      if (nextQueued) return nextQueued.id;
+    }
+    return null;
+  }, [activeTaskId, tasks, isQueueRunning]);
+
+  // Auto-scroll the Extractor queue preview table so the active task row is always centered vertically
+  useEffect(() => {
+    if (!autoScrollPreview || activeTab !== 'extractor' || !currentTrackedTaskId) {
+      return;
+    }
+    const container = queuePreviewContainerRef.current;
+    const activeRow = activePreviewRowRef.current;
+    if (!container || !activeRow) return;
+
+    const containerHeight = container.clientHeight;
+    const rowTop = activeRow.offsetTop;
+    const rowHeight = activeRow.offsetHeight;
+    const targetScrollTop = Math.max(
+      0,
+      rowTop - containerHeight / 2 + rowHeight / 2
+    );
+
+    container.scrollTo({
+      top: targetScrollTop,
+      behavior: 'smooth',
+    });
+  }, [currentTrackedTaskId, autoScrollPreview, activeTab]);
+
   useEffect(() => {
     if (!isQueueRunning) return;
     if (activeTaskId !== null) return;
@@ -750,6 +828,17 @@ export default function App() {
         : 'No failed or blocked tasks found in queue to retry.'
     );
   };
+
+  const handleRequeueIntegrityFlagged = useCallback(
+    (filter?: { mouzaId?: string; endpointType?: EporchaEndpointType }) => {
+      setTasks((prev) => {
+        const { updatedTasks } = requeueIntegrityFlaggedTasks(prev, filter);
+        savePersistedQueue(updatedTasks);
+        return updatedTasks;
+      });
+    },
+    []
+  );
 
   const handleDownloadIndividualTask = async (task: QueueTask) => {
     const success = await triggerIndividualPdfDownload(task);
@@ -880,6 +969,7 @@ export default function App() {
             {[
               { id: 'extractor', label: 'Extractor' },
               { id: 'queue', label: `Live Queue (${tasks.length})` },
+              { id: 'integrity', label: 'Integrity Health' },
               { id: 'index', label: `Tabular Index (${tabularRecords.length})` },
               { id: 'docs', label: '6-Doc Architecture' },
             ].map((tab) => {
@@ -945,10 +1035,11 @@ export default function App() {
       </div>
 
       {/* Mobile Navigation Bar (Visible on mobile/tablet) with subtle transitions */}
-      <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5 gap-1">
+      <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5 gap-1 overflow-x-auto">
         {[
           { id: 'extractor', label: 'Extractor' },
           { id: 'queue', label: `Queue (${tasks.length})` },
+          { id: 'integrity', label: 'Integrity Health' },
           { id: 'index', label: `Index (${tabularRecords.length})` },
           { id: 'docs', label: '6-Docs' },
         ].map((item) => {
@@ -1032,6 +1123,7 @@ export default function App() {
         {/* WORKSPACE VIEW 1: EXTRACTOR */}
         {activeTab === 'extractor' && (
           <div key="view-extractor" className="space-y-6 workspace-view-enter">
+            <PortalAlertsView />
             {/* STEP 01: Cascading Area Selection (Division -> District -> Upazila -> Auto-Select 100% Mouzas) */}
             <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -1047,47 +1139,23 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* Prominent Upazila Total Mouza Counter & Quick Toggles */}
+                {/* Prominent Upazila Total Mouza Counter & Select/Deselect All Override Control */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="px-3.5 py-1.5 rounded-xl bg-slate-950 border-2 border-emerald-500/60 text-xs font-mono-tabular text-slate-200 shadow-md">
-                    <span className="text-slate-300 font-medium">Total Mouzas Found:</span>{' '}
-                    <span className="text-emerald-400 font-black text-sm">
-                      {allMouzasForUpazila.length}
-                    </span>{' '}
-                    <span className="text-emerald-300 font-bold ml-1">
-                      (100% Auto-Selected: {selectedMouzaIds.length}/{allMouzasForUpazila.length})
+                  <div className="px-3.5 py-1.5 rounded-xl bg-slate-950 border-2 border-emerald-500/60 text-xs font-mono-tabular text-slate-200 shadow-md flex items-center gap-2">
+                    <span className="text-white font-bold">
+                      Total Mouzas Found: {allMouzasForUpazila.length}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 text-[11px] font-bold">
+                      Auto-Selected ({selectedMouzaIds.length}/{allMouzasForUpazila.length})
                     </span>
                   </div>
 
                   <button
                     type="button"
-                    onClick={selectAll100PercentMouzas}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/30 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
+                    onClick={handleToggleSelectDeselectAllMouzas}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    Select All Mouzas ({allMouzasForUpazila.length})
-                  </button>
-
-                  {activeUpazila.id === 'upz-nabinagar' && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        selectOnlyVisibleUnionMouzas('20-No Kaitala South Union')
-                      }
-                      className="px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/60 hover:bg-amber-500/30 text-amber-200 text-xs font-medium font-bn transition-colors whitespace-nowrap shrink-0"
-                    >
-                      ২০নং কাইতলা দক্ষিণ ইউনিয়ন (Goalai · Kaitala)
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedMouzaIds([]);
-                      setTasks([]);
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
-                  >
-                    Clear Mouzas
+                    {areAllMouzasSelected ? 'Select/Deselect All (Deselect All)' : 'Select/Deselect All (Select All)'}
                   </button>
 
                   <button
@@ -1109,8 +1177,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Cascading Area Dropdown Menus */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* 3-Tier Cascading Area Dropdown Menus (Division -> District -> Upazila, NO Union Filter) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label
                     htmlFor="division-select"
@@ -1178,7 +1246,6 @@ export default function App() {
                     })}
                   </select>
                 </div>
-
               </div>
 
               {/* Nationwide Automated Queue Monitor & Prominent Mouza Counter */}
@@ -1187,12 +1254,13 @@ export default function App() {
                 districtNameEn={activeDistrict.nameEn}
                 divisionNameEn={activeDivision.nameEn}
                 totalMouzasCount={allMouzasForUpazila.length}
-                selectedMouzas={allMouzasForUpazila}
+                selectedMouzas={selectedMouzas}
                 tasks={tasks}
                 isQueueRunning={isQueueRunning}
                 activeTaskId={activeTaskId}
                 onToggleQueue={() => setIsQueueRunning((prev) => !prev)}
                 onRestartQueue={handleRestartQueueFromZero}
+                onPrioritizeMouza={handlePrioritizeMouza}
               />
 
               {/* Dynamic Custom Mouza Registration Form */}
@@ -1704,6 +1772,19 @@ export default function App() {
 
                   <button
                     type="button"
+                    onClick={() => setAutoScrollPreview((prev) => !prev)}
+                    aria-pressed={autoScrollPreview}
+                    className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      autoScrollPreview
+                        ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                        : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Auto-Scroll Center: {autoScrollPreview ? 'ON' : 'OFF'}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setActiveTab('queue')}
                     className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
                   >
@@ -1719,14 +1800,19 @@ export default function App() {
                 </div>
               )}
 
-              {/* Compact Preview of First 8 Tasks in Queue */}
+              {/* Auto-Scrolling Live Queue Preview Table in Extractor View */}
               {tasks.length > 0 && (
                 <div className="rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
-                  <div className="overflow-x-auto">
+                  <div
+                    ref={queuePreviewContainerRef}
+                    data-testid="extractor-queue-preview-scroll"
+                    className="max-h-[320px] overflow-y-auto overflow-x-auto scroll-smooth relative"
+                  >
                     <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-800 text-[11px] text-slate-400 bg-slate-900/60">
-                          <th className="py-2.5 px-3">Mouza & JL</th>
+                      <thead className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur-sm shadow-sm">
+                        <tr className="border-b border-slate-800 text-[11px] text-slate-400">
+                          <th className="py-2.5 px-3 w-16">#</th>
+                          <th className="py-2.5 px-3">Mouza &amp; JL</th>
                           <th className="py-2.5 px-3">Document Type</th>
                           <th className="py-2.5 px-3">Survey</th>
                           <th className="py-2.5 px-3">Forensic FileName</th>
@@ -1735,12 +1821,35 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {tasks.slice(0, 8).map((task) => {
+                        {tasks.map((task, idx) => {
                           const fetching =
                             activeTaskId === task.id ||
                             task.status === 'FETCHING_EPORCHA_TECH';
+                          const isTrackedRow = currentTrackedTaskId === task.id;
                           return (
-                            <tr key={task.id} className="hover:bg-slate-900/40">
+                            <tr
+                              key={task.id}
+                              ref={isTrackedRow ? activePreviewRowRef : null}
+                              data-active-task={isTrackedRow ? 'true' : undefined}
+                              className={`transition-colors ${
+                                fetching
+                                  ? 'bg-emerald-950/60 ring-1 ring-inset ring-emerald-500/60'
+                                  : isTrackedRow
+                                  ? 'bg-slate-900/90 ring-1 ring-inset ring-amber-500/40'
+                                  : 'hover:bg-slate-900/40'
+                              }`}
+                            >
+                              <td className="py-2.5 px-3 font-mono-tabular text-slate-400">
+                                <span
+                                  className={
+                                    isTrackedRow
+                                      ? 'text-emerald-400 font-bold'
+                                      : 'text-slate-400'
+                                  }
+                                >
+                                  #{idx + 1}
+                                </span>
+                              </td>
                               <td className="py-2.5 px-3 font-bn text-white">
                                 JL-{task.mouzaJlNo} · {task.mouzaNameBn} ({task.mouzaNameEn})
                               </td>
@@ -1755,7 +1864,7 @@ export default function App() {
                               </td>
                               <td className="py-2.5 px-3 font-mono-tabular">
                                 {fetching ? (
-                                  <span className="text-amber-400 flex items-center gap-1">
+                                  <span className="text-amber-400 flex items-center gap-1 font-semibold">
                                     <RefreshCw className="w-3 h-3 animate-spin" />
                                     <span>FETCHING</span>
                                   </span>
@@ -1773,7 +1882,7 @@ export default function App() {
                                   type="button"
                                   onClick={() => handleRunSingleTask(task.id)}
                                   disabled={fetching}
-                                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200"
+                                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 cursor-pointer"
                                 >
                                   Fetch Now
                                 </button>
@@ -1784,20 +1893,21 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
-                  {tasks.length > 8 && (
-                    <div className="px-4 py-2 bg-slate-900/60 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-                      <span>
-                        Showing first 8 of {tasks.length} queued documents for {activeUpazila.nameEn}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('queue')}
-                        className="text-emerald-400 hover:underline font-medium"
-                      >
-                        View All {tasks.length} Tasks in Live Queue →
-                      </button>
-                    </div>
-                  )}
+                  <div className="px-4 py-2 bg-slate-900/60 border-t border-slate-800 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      Showing all {tasks.length} queued documents for {activeUpazila.nameEn} ·{' '}
+                      {autoScrollPreview
+                        ? 'Active task row auto-centered vertically as queue progresses'
+                        : 'Vertical auto-scroll paused'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('queue')}
+                      className="text-emerald-400 hover:underline font-medium cursor-pointer"
+                    >
+                      View All {tasks.length} Tasks in Live Queue →
+                    </button>
+                  </div>
                 </div>
               )}
             </section>
@@ -1822,8 +1932,25 @@ export default function App() {
               onExportCsv={handleExportAuditCsv}
               onDownloadIndividual={handleDownloadIndividualTask}
               onOpenBatchRenameModal={() => setBatchRenameModalOpen(true)}
+              onReorderTasks={handleReorderTasks}
+              onMoveTaskPriority={handleMoveTaskPriority}
+              onPrioritizeMouza={handlePrioritizeMouza}
               isBundlingZip={isBundlingZip}
               lastBundleStatus={lastBundleStatus}
+            />
+          </div>
+        )}
+
+        {/* WORKSPACE VIEW 2.5: INTEGRITY HEALTH & THROTTLING DIAGNOSTICS */}
+        {activeTab === 'integrity' && (
+          <div key="view-integrity" className="workspace-view-enter">
+            <IntegrityHealthView
+              tasks={tasks}
+              proxyConfig={proxyConfig}
+              onUpdateProxyConfig={handleUpdateProxyConfig}
+              onRequeueFlagged={handleRequeueIntegrityFlagged}
+              onPrioritizeMouza={handlePrioritizeMouza}
+              onOpenQueueConsole={() => setActiveTab('queue')}
             />
           </div>
         )}
