@@ -113,10 +113,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     setSelectedDivisionId(divId);
     setSelectedDistrictId(null);
     setSelectedUpazilaId(null);
-    
-    // Pre-populate from baseline if available
-    const div = divisions.find(d => d.id === divId);
-    setDistricts(div?.districts || []);
+    setDistricts([]);
     setUpazilas([]);
     setMouzas([]);
     setSelectedMouzaIds([]);
@@ -129,31 +126,17 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       if (cached.length === 0) {
         cached = await geoDiscovery.discoverDistricts(divId);
       }
-      
-      if (cached.length > 0) {
-        setDistricts(prev => {
-          // Merge discovered with preloaded to avoid losing data
-          const existingIds = new Set(prev.map(p => p.id));
-          const next = [...prev];
-          cached.forEach(c => {
-            if (!existingIds.has(c.id)) next.push(c);
-          });
-          return next;
-        });
-      }
+      setDistricts(cached);
       setIsDiscovering(false);
-      setDiscoveryStatus(null);
+      setDiscoveryStatus(cached.length > 0 ? null : 'No districts found for this division.');
     }
-  }, [divisions]);
+  }, []);
 
   // 2. District Selection Handler
   const handleDistrictChange = useCallback(async (distId: string | null) => {
     setSelectedDistrictId(distId);
     setSelectedUpazilaId(null);
-    
-    // Pre-populate upazilas if they exist in the current districts state
-    const dist = districts.find(d => d.id === distId);
-    setUpazilas(dist?.upazilas || []);
+    setUpazilas([]);
     setMouzas([]);
     setSelectedMouzaIds([]);
     
@@ -164,21 +147,11 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       if (cached.length === 0) {
         cached = await geoDiscovery.discoverUpazilas(distId);
       }
-      
-      if (cached.length > 0) {
-        setUpazilas(prev => {
-          const existingIds = new Set(prev.map(p => p.id));
-          const next = [...prev];
-          cached.forEach(c => {
-            if (!existingIds.has(c.id)) next.push(c);
-          });
-          return next;
-        });
-      }
+      setUpazilas(cached);
       setIsDiscovering(false);
-      setDiscoveryStatus(null);
+      setDiscoveryStatus(cached.length > 0 ? null : 'No upazilas found for this district.');
     }
-  }, [districts]);
+  }, []);
 
   // 3. Upazila Selection Handler (Phase 4 & 5)
   const handleUpazilaChange = useCallback(async (upzId: string | null) => {
