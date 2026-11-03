@@ -93,12 +93,12 @@ export const NationwideQueueMonitor: React.FC<NationwideQueueMonitorProps> = ({
               </span>
             </h3>
             <span className="px-2.5 py-1 rounded-md bg-emerald-950 text-emerald-300 border border-emerald-500/40 text-xs font-bold">
-              Auto-Selected ({selectedMouzas.length}/{totalMouzasCount})
+              All Mouzas Selected ({selectedMouzas.length}/{totalMouzasCount})
             </span>
           </div>
 
           <p className="text-xs text-slate-300 font-bn">
-            {upazila.nameBn} উপজেলার সব মৌজা স্বয়ংক্রিয়ভাবে নির্বাচিত হয়েছে এবং কিউ ইনডেক্স ০ (১ম মৌজা) থেকে ক্রমান্বয়ে প্রক্রিয়া সম্পন্ন হচ্ছে।
+            {upazila.nameBn} উপজেলার সকল মৌজা (All Mouzas) নির্বাচিত হয়েছে এবং কিউ ইনডেক্স ০ (১ম মৌজা) থেকে ক্রমান্বয়ে প্রক্রিয়া সম্পন্ন হচ্ছে।
           </p>
         </div>
 

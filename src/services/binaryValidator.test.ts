@@ -105,7 +105,7 @@ test('builds standardized forensic filenames and eporcha.tech target URLs', () =
 
   const nabinagar = GEO_HIERARCHY[0].districts[0].upazilas[0];
   assert.equal(nabinagar.nameEn, 'Nabinagar');
-  assert.equal(nabinagar.mouzas.length, 24);
+  assert.equal(nabinagar.mouzas.length, 176);
 
   const goalai = nabinagar.mouzas.find((m) => m.jlNo === '114');
   assert.ok(goalai);
@@ -153,7 +153,7 @@ test('cascading districts populate upazilas and Select All generates full multi-
     bookStyle: { layout: 'new', colorMode: 'color' },
   });
 
-  assert.equal(allTasks.length, debidwar.mouzas.length * 21);
+  assert.equal(allTasks.length, debidwar.mouzas.length * 26);
 });
 
 test('calculates polite jitter delay within 600ms-1200ms bounds and formats CSV audit', () => {
@@ -272,7 +272,7 @@ test('buildUnifiedQueueForDocumentSelection explicitly populates all Mouza IDs w
   const brahmanbariaDist = chittagongDiv.districts[0];
   const nabinagarUpz = brahmanbariaDist.upazilas[0];
 
-  // When currentSelectedMouzaIds is empty ([]), it must explicitly select 100% of available Mouzas for Nabinagar (24)
+  // When currentSelectedMouzaIds is empty ([]), it must explicitly select all available Mouzas for Nabinagar (176)
   const unified = buildUnifiedQueueForDocumentSelection({
     division: chittagongDiv,
     district: brahmanbariaDist,
@@ -285,9 +285,9 @@ test('buildUnifiedQueueForDocumentSelection explicitly populates all Mouza IDs w
   });
 
   assert.equal(unified.selectedMouzaIds.length, nabinagarUpz.mouzas.length);
-  assert.equal(unified.selectedMouzas.length, 24);
-  // 24 Mouzas * 21 tasks per Mouza across all 5 endpoints and 5 surveys = 504 tasks
-  assert.equal(unified.tasks.length, 24 * 21);
+  assert.equal(unified.selectedMouzas.length, 176);
+  // 176 Mouzas * 26 tasks per Mouza across all 6 endpoints and 5 surveys = 4576 tasks
+  assert.equal(unified.tasks.length, 176 * 26);
 });
 
 test('batchRenameService applies regex and template patterns to rename downloaded PDFs', async () => {

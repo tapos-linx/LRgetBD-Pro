@@ -112,7 +112,7 @@ export default function App() {
   // Union & Search Filter State
   const [mouzaSearch, setMouzaSearch] = useState<string>('');
 
-  // Selected Mouzas & IDs (100% auto-selected on Upazila change)
+  // Selected Mouzas & IDs (All Mouza Selection on Upazila change)
   const [selectedMouzas, setSelectedMouzas] = useState<MouzaNode[]>(() => [
     ...GEO_HIERARCHY[0].districts[0].upazilas[0].mouzas,
   ]);
@@ -146,12 +146,21 @@ export default function App() {
 
   // Queue, Proxy & Storage State
   const [tasks, setTasks] = useState<QueueTask[]>(() => {
-    const persisted = loadPersistedQueue();
-    if (persisted.length > 0) return persisted;
     const initDiv = GEO_HIERARCHY[0];
     const initDist = initDiv.districts[0];
     const initUpz = initDist.upazilas[0];
-    return buildQueueTasksForUpazila({
+    const persisted = loadPersistedQueue();
+    if (persisted.length > 0) {
+      const uniquePersistedMouzas = new Set(persisted.map((t) => t.mouzaId));
+      const isDefaultNabinagar = persisted.every(
+        (t) => t.upazilaNameEn === initUpz.nameEn
+      );
+      // If persisted queue is from an older 24-Mouza Nabinagar snapshot, rebuild for all 176 Mouzas
+      if (!isDefaultNabinagar || uniquePersistedMouzas.size === initUpz.mouzas.length) {
+        return persisted;
+      }
+    }
+    const freshTasks = buildQueueTasksForUpazila({
       division: initDiv,
       district: initDist,
       upazila: initUpz,
@@ -161,6 +170,8 @@ export default function App() {
       khatianNo: 'ALL',
       mapSheetNo: 1,
     }).tasks;
+    savePersistedQueue(freshTasks);
+    return freshTasks;
   });
 
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig>(() =>
@@ -260,7 +271,7 @@ export default function App() {
     [bookStyle, khatianInput, mapSheetInput]
   );
 
-  // 1. Cascade Handler: Division Change -> Updates District -> Updates Upazilas -> Auto-Selects 100% Mouzas & Triggers Queue Generation Engine
+  // 1. Cascade Handler: Division Change -> Updates District -> Updates Upazilas -> Selects All Mouzas & Triggers Queue Generation Engine
   const handleDivisionChange = (nextDivisionId: string) => {
     setDivisionId(nextDivisionId);
     const nextDiv =
@@ -291,11 +302,11 @@ export default function App() {
     savePersistedQueue(builtTasks);
     setIsQueueRunning(true);
     setEnqueueFeedback(
-      `Division "${nextDiv.nameEn}" → District "${firstDist.nameEn}" → Upazila "${firstUpz.nameEn}": Total Mouzas Found: ${allMouzas.length} (100% auto-selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
+      `Division "${nextDiv.nameEn}" → District "${firstDist.nameEn}" → Upazila "${firstUpz.nameEn}": Total Mouzas Found: ${allMouzas.length} (All Mouzas Selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
     );
   };
 
-  // 2. Cascade Handler: District Change -> Automatically populates all Upazilas for that District & selects 100% Mouzas of first Upazila
+  // 2. Cascade Handler: District Change -> Automatically populates all Upazilas for that District & selects all Mouzas of first Upazila
   const handleDistrictChange = (nextDistrictId: string) => {
     setDistrictId(nextDistrictId);
     const nextDist =
@@ -325,11 +336,11 @@ export default function App() {
     savePersistedQueue(builtTasks);
     setIsQueueRunning(true);
     setEnqueueFeedback(
-      `District "${nextDist.nameBn} (${nextDist.nameEn})" selected: Loaded all ${nextDist.upazilas.length} Upazilas. Total Mouzas Found in ${firstUpz.nameEn}: ${allMouzas.length} (100% auto-selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
+      `District "${nextDist.nameBn} (${nextDist.nameEn})" selected: Loaded all ${nextDist.upazilas.length} Upazilas. Total Mouzas Found in ${firstUpz.nameEn}: ${allMouzas.length} (All Mouzas Selected). Queue auto-started from Index 0 (${builtTasks.length} tasks).`
     );
   };
 
-  // 3. Cascade Handler: Upazila Change -> Immediately fetches/counts all Mouzas, auto-selects 100% without manual clicks, builds queue array, and automatically starts sequential execution from Queue Index 0!
+  // 3. Cascade Handler: Upazila Change -> Explicitly iterates over the entire upazila.mouzas list without any slice or length caps, selects all Mouza IDs (e.g. all 176 in Nabinagar), builds the full queue, and starts execution from Index 0
   const handleUpazilaChange = (nextUpazilaId: string) => {
     setActiveTaskId(null);
     setMouzaSearch('');
@@ -339,29 +350,44 @@ export default function App() {
       activeDistrict.upazilas.find((u) => u.id === nextUpazilaId) ||
       activeDistrict.upazilas[0];
 
-    // Force-select 100% of the new Upazila's Mouzas and build queue
-    const { allMouzas, selectedMouzaIds: nextSelectedIds, tasks: builtTasks } =
-      buildQueueTasksForUpazila({
-        division: activeDivision,
-        district: activeDistrict,
-        upazila: nextUpz,
-        customMouzas: customMouzasByUpazila[nextUpz.id] || [],
-        endpoints: selectedEndpoints,
-        surveys: selectedSurveys,
-        bookStyle,
-        khatianNo: khatianInput.trim() || 'ALL',
-        mapSheetNo: mapSheetInput || 1,
-      });
+    // Explicitly iterate over the entire nextUpz.mouzas list (plus any custom Mouzas for this Upazila) without any slice/cap
+    const fullUpazilaMouzas: MouzaNode[] = [];
+    const fullUpazilaMouzaIds: string[] = [];
 
-    setSelectedMouzas(allMouzas);
-    setSelectedMouzaIds(nextSelectedIds);
+    for (const mouza of nextUpz.mouzas) {
+      fullUpazilaMouzas.push(mouza);
+      fullUpazilaMouzaIds.push(mouza.id);
+    }
+
+    const customList = customMouzasByUpazila[nextUpz.id] || [];
+    for (const customMouza of customList) {
+      if (!fullUpazilaMouzaIds.includes(customMouza.id)) {
+        fullUpazilaMouzas.push(customMouza);
+        fullUpazilaMouzaIds.push(customMouza.id);
+      }
+    }
+
+    const { tasks: builtTasks } = buildQueueTasksForUpazila({
+      division: activeDivision,
+      district: activeDistrict,
+      upazila: nextUpz,
+      customMouzas: customList,
+      endpoints: selectedEndpoints,
+      surveys: selectedSurveys,
+      bookStyle,
+      khatianNo: khatianInput.trim() || 'ALL',
+      mapSheetNo: mapSheetInput || 1,
+    });
+
+    setSelectedMouzas(fullUpazilaMouzas);
+    setSelectedMouzaIds(fullUpazilaMouzaIds);
     setTasks(builtTasks);
     savePersistedQueue(builtTasks);
     // Begin execution automatically, starting from Queue Index 0 (1st Mouza)
     setIsQueueRunning(true);
 
     setEnqueueFeedback(
-      `Upazila "${nextUpz.nameBn} (${nextUpz.nameEn})" selected: Total Mouzas Found: ${allMouzas.length}. 100% Mouzas auto-selected. Processing queue generated with ${builtTasks.length} tasks and started automatically from Index 0.`
+      `Upazila "${nextUpz.nameBn} (${nextUpz.nameEn})" selected: Total Mouzas Found: ${fullUpazilaMouzas.length}. All Mouzas Selected (${fullUpazilaMouzaIds.length}/${fullUpazilaMouzas.length}). Processing queue generated with ${builtTasks.length} tasks and started automatically from Index 0.`
     );
   };
 
@@ -439,7 +465,7 @@ export default function App() {
     savePersistedQueue(builtTasks);
     setIsQueueRunning(true);
     setEnqueueFeedback(
-      `Cleared previous partial filters and selected 100% Mouzas (${nextSelectedMouzas.length}/${allMouzasForUpazila.length}) in ${activeUpazila.nameEn} with ALL 5 Document Modes & ALL 5 Survey Types — ${builtTasks.length} tasks queued and downloading automatically from https://eporcha.tech!`
+      `Cleared previous partial filters and selected all Mouzas (${nextSelectedMouzas.length}/${allMouzasForUpazila.length}) in ${activeUpazila.nameEn} with ALL 5 Document Modes & ALL 5 Survey Types — ${builtTasks.length} tasks queued and downloading automatically from https://eporcha.tech!`
     );
   };
 
@@ -1124,18 +1150,18 @@ export default function App() {
         {activeTab === 'extractor' && (
           <div key="view-extractor" className="space-y-6 workspace-view-enter">
             <PortalAlertsView />
-            {/* STEP 01: Cascading Area Selection (Division -> District -> Upazila -> Auto-Select 100% Mouzas) */}
+            {/* STEP 01: Cascading Area Selection (Division -> District -> Upazila -> All Mouza Selection) */}
             <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                   <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
                     <span>
-                      01. Cascading Area Selection (বিভাগ → জেলা → উপজেলা → ১০০% মৌজা অটো-সিলেকশন)
+                      01. Cascading Area Selection (বিভাগ → জেলা → উপজেলা → সকল মৌজা নির্বাচন / All Mouza Selection)
                     </span>
                   </h2>
                   <p className="text-xs text-slate-400 font-bn mt-0.5">
-                    জেলা পরিবর্তন করলে সাথে সাথে সব উপজেলা লোড হয় এবং নতুন উপজেলা নির্বাচন করলে সব মৌজা (১০০%) স্বয়ংক্রিয়ভাবে সিলেক্ট হয়ে ডাউনলোড কিউ প্রস্তুত করে।
+                    জেলা পরিবর্তন করলে সাথে সাথে সব উপজেলা লোড হয় এবং নতুন উপজেলা নির্বাচন করার সাথে সাথে উক্ত উপজেলার সকল মৌজা (All Mouzas) গণনা, লোড ও সিলেক্ট হয়ে ডাউনলোড কিউ প্রস্তুত করে।
                   </p>
                 </div>
 
@@ -1146,7 +1172,7 @@ export default function App() {
                       Total Mouzas Found: {allMouzasForUpazila.length}
                     </span>
                     <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 text-[11px] font-bold">
-                      Auto-Selected ({selectedMouzaIds.length}/{allMouzasForUpazila.length})
+                      All Mouzas Selected ({selectedMouzaIds.length}/{allMouzasForUpazila.length})
                     </span>
                   </div>
 
@@ -1380,7 +1406,7 @@ export default function App() {
                     </div>
                     <div className="text-[11px] font-mono-tabular text-slate-400">
                       {areAllMouzasSelected
-                        ? `All ${allMouzasForUpazila.length} Mouzas Selected (100%)`
+                        ? `All ${allMouzasForUpazila.length} Mouzas Selected`
                         : `${selectedMouzaIds.length} of ${allMouzasForUpazila.length} Selected (Manual Mode)`}
                     </div>
                   </div>

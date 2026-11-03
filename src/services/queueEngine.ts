@@ -42,8 +42,24 @@ export function buildQueueTasksForUpazila(params: {
   selectedMouzaIds: string[];
   tasks: QueueTask[];
 } {
-  const allMouzas = [...params.upazila.mouzas, ...(params.customMouzas || [])];
-  const selectedMouzaIds = allMouzas.map((m) => m.id);
+  // Explicitly iterate through the entire upazila.mouzas list (and any custom Mouzas) with zero slice/length limits
+  const allMouzas: MouzaNode[] = [];
+  const selectedMouzaIds: string[] = [];
+
+  for (const mouza of params.upazila.mouzas) {
+    allMouzas.push(mouza);
+    selectedMouzaIds.push(mouza.id);
+  }
+
+  if (params.customMouzas && params.customMouzas.length > 0) {
+    for (const customMouza of params.customMouzas) {
+      if (!selectedMouzaIds.includes(customMouza.id)) {
+        allMouzas.push(customMouza);
+        selectedMouzaIds.push(customMouza.id);
+      }
+    }
+  }
+
   const tasks = generateTasksForMouzasAndEndpoints({
     divisionNameEn: params.division.nameEn,
     divisionSlug: params.division.eporchaSlug,
@@ -646,11 +662,12 @@ export function calculateQueueProgress(
 }
 
 export const BASELINE_DOC_TYPE_AVG_BYTES: Record<EporchaEndpointType, number> = {
-  'mouza-vittik-khatian': 48 * 1024, // ~48 KB baseline
-  'khatian-boi': 180 * 1024, // ~180 KB full register book baseline
-  'dag-boi': 140 * 1024, // ~140 KB plot index book baseline
-  'mouza-map': 320 * 1024, // ~320 KB high-res map sheet baseline
-  'namjari-khatian': 52 * 1024, // ~52 KB mutation khatian baseline
+  'mouza-vittik-khatian': 180 * 1024, // ~180 KB full Mouza Khatian book baseline
+  'mouza-vittik-dag': 140 * 1024, // ~140 KB full Mouza Dag book baseline
+  'survey-khatian': 48 * 1024, // ~48 KB survey Khatian record baseline
+  'namjari-khatian': 52 * 1024, // ~52 KB mutation Khatian baseline
+  'mouza-map': 320 * 1024, // ~320 KB high-res Mouza map sheet baseline
+  'khatian-index': 95 * 1024, // ~95 KB Khatian index & ownership summary baseline
 };
 
 export interface DocumentTypeSizeStats {
@@ -690,10 +707,11 @@ export function computeDocumentTypeSizeStats(
 ): Record<EporchaEndpointType, DocumentTypeSizeStats> {
   const buckets: Record<EporchaEndpointType, number[]> = {
     'mouza-vittik-khatian': [],
-    'khatian-boi': [],
-    'dag-boi': [],
-    'mouza-map': [],
+    'mouza-vittik-dag': [],
+    'survey-khatian': [],
     'namjari-khatian': [],
+    'mouza-map': [],
+    'khatian-index': [],
   };
 
   for (const t of tasks) {
@@ -924,7 +942,7 @@ export function computeQueueIntegrityHealthReport(
       corruptedCount: 0,
       sumDownloadedBytes: 0,
     },
-    'khatian-boi': {
+    'mouza-vittik-dag': {
       totalTasks: 0,
       downloadedCount: 0,
       verifiedCount: 0,
@@ -932,7 +950,15 @@ export function computeQueueIntegrityHealthReport(
       corruptedCount: 0,
       sumDownloadedBytes: 0,
     },
-    'dag-boi': {
+    'survey-khatian': {
+      totalTasks: 0,
+      downloadedCount: 0,
+      verifiedCount: 0,
+      partialSuspectCount: 0,
+      corruptedCount: 0,
+      sumDownloadedBytes: 0,
+    },
+    'namjari-khatian': {
       totalTasks: 0,
       downloadedCount: 0,
       verifiedCount: 0,
@@ -948,7 +974,7 @@ export function computeQueueIntegrityHealthReport(
       corruptedCount: 0,
       sumDownloadedBytes: 0,
     },
-    'namjari-khatian': {
+    'khatian-index': {
       totalTasks: 0,
       downloadedCount: 0,
       verifiedCount: 0,

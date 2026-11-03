@@ -422,7 +422,7 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
         </div>
 
         <div className="text-[11px] text-slate-500 italic">
-          100% Mouza Auto-Selection Active
+          All Mouza Selection (সকল মৌজা নির্বাচন) Active
         </div>
       </div>
     </div>

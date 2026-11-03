@@ -27,10 +27,11 @@ Provide a 100% free, zero-payment, zero-hallucination bulk extraction, binary ve
 
 ---
 
-## 3. Target Geography (Primary Scope)
-Full cascading support for **Chittagong Division (চট্টগ্রাম বিভাগ)**, prioritizing:
+## 3. Target Geography (Primary Scope) & All Mouza Selection
+Full cascading support for **Chittagong Division (চট্টগ্রাম বিভাগ)** and all 8 Divisions of Bangladesh, prioritizing:
 - **Brahmanbaria District (ব্রাহ্মণবাড়িয়া জেলা):**
-  - **Nabinagar Upazila (নবীনগর উপজেলা)** — including **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** (`Goalai / গোয়ালী` JL-114, `Kaitala / কাইতলা` JL-115, `Noagaon / নোয়াগাঁও` JL-116, `ramnagar / রামনগর` JL-117), plus Balia, Mehari, Nilkhi, Tilinagar, Kedarkhola, Bitghar, Jinodpur, Satmora, Rasullabad, Salimganj, Shyamgram, Boroikandi, Krishnanagar, Natghar, Ratanpur, Sreenagar, Vidyakut, etc.
+  - **Nabinagar Upazila (নবীনগর উপজেলা / থানা — All 176 Mouzas Pre-Indexed)** — including **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** (`Goalai / গোয়ালী` JL-114, `Kaitala / কাইতলা` JL-115, `Noagaon / নোয়াগাঁও` JL-116, `Ramnagar / রামনগর` JL-117), plus all 21 Unions & Nabinagar Pourashava (Balia, Mehari, Nilkhi, Tilinagar, Kedarkhola, Bitghar, Jinodpur, Satmora, Rasullabad, Salimganj, Shyamgram, Boroikandi, Krishnanagar, Natghar, Ratanpur, Sreenagar, Vidyakut, etc. — **176 Mouzas total**).
+  - **All Mouza Selection (`সকল মৌজা নির্বাচন`):** Selecting any Upazila immediately counts, fetches, and selects **all Mouzas** within that Upazila (e.g., all **176 Mouzas** in Nabinagar Upazila) and generates the download queue automatically.
   - All 9 Upazilas of Brahmanbaria: `Nabinagar`, `Brahmanbaria Sadar`, `Ashuganj`, `Sarail`, `Nasirnagar`, `Kasba`, `Akhaura`, `Bancharampur`, `Bijoynagar`.
 - **Cumilla District (কুমিল্লা জেলা):**
   - `Muradnagar`, `Debidwar`, `Brahmanpara`, `Burichang`, `Cumilla Adarsha Sadar`, `Daudkandi`, `Homna`, `Chandina`.

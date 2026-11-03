@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -15,6 +16,7 @@ import android.os.IBinder
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import bd.landarchive.lrgetbdpro.LRDownloaderApp
 import bd.landarchive.lrgetbdpro.MainActivity
 import bd.landarchive.lrgetbdpro.data.db.AppDatabase
@@ -30,6 +32,9 @@ import kotlin.random.Random
 class QueueDownloadService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var queueJob: Job? = null
+    private var notificationObserverJob: Job? = null
+
     private val CHANNEL_ID = "LR_Queue_Channel"
     private val NOTIFICATION_ID = 1
 
@@ -68,22 +73,39 @@ class QueueDownloadService : Service() {
             it.copy(isProcessing = true, totalTasks = tasks.size, currentTaskIndex = 0)
         }
 
-        // 1. Promote Service to Foreground immediately to prevent OS termination
-        startForeground(NOTIFICATION_ID, buildNotification("Engine Started...", 0, tasks.size, false))
+        // 1. Promote Service to Foreground immediately with Android 14 (API 34) dataSync compliance
+        val initialNotification = buildNotification("Engine Started...", 0, tasks.size, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                initialNotification,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                } else {
+                    0
+                }
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, initialNotification)
+        }
 
-        // Observe QueueStateManager so Pause/Resume immediately updates the notification action button
+        // 2. Observe QueueStateManager without leaking duplicate collectors
         observeQueueStateForNotifications()
 
-        // 2. Launch the Nested Execution Loop
-        serviceScope.launch {
-            val downloadDao = AppDatabase.getDatabase(applicationContext, CoroutineScope(Dispatchers.IO)).downloadDao()
+        // 3. Launch the Nested Execution Loop using the singleton applicationScope for Room DB
+        queueJob?.cancel()
+        queueJob = serviceScope.launch {
+            val appScope = (application as? LRDownloaderApp)?.applicationScope ?: serviceScope
+            val downloadDao = AppDatabase.getDatabase(applicationContext, appScope).downloadDao()
 
             for ((index, task) in tasks.withIndex()) {
 
-                // Spin-lock for pause
-                while (QueueStateManager.queueState.value.isPaused) {
+                // Spin-lock for pause (cancellation-cooperative via delay)
+                while (QueueStateManager.queueState.value.isPaused && isActive) {
                     delay(500)
                 }
+                if (!isActive) break
 
                 // Update Singleton State
                 val currentIndex = index + 1
@@ -102,21 +124,24 @@ class QueueDownloadService : Service() {
                 val existingCount = downloadDao.isDocumentAlreadyDownloaded(task.mouza.id, task.docType)
 
                 if (existingCount > 0) {
-                    // SKIP LOGIC
+                    // SKIP LOGIC: bypasses network call and long jitter delay
                     QueueStateManager.updateState { it.copy(activeDocType = "${task.docType} (Skipped)") }
-                    delay(300) // Micro-delay for UI smoothness only, no long jitter needed
+                    delay(300) // Micro-delay for UI smoothness only
                 } else {
                     // DOWNLOAD LOGIC
-                    executeDownloadTask(task) // Executes network call & saves to DB
+                    executeDownloadTask(task) // Executes network call & saves to MediaStore + Room DB
 
-                    // Apply Polite Jitter Delay ONLY after an actual network hit
-                    delay(kotlin.random.Random.nextLong(1500, 3500))
+                    // Apply Polite Jitter Delay (1.5s - 3.5s) ONLY after an actual network hit
+                    if (index < tasks.size - 1 && isActive) {
+                        delay(Random.nextLong(1500, 3500))
+                    }
                 }
             }
 
             // Loop Finished
+            notificationObserverJob?.cancel()
             QueueStateManager.updateState {
-                it.copy(isProcessing = false, activeMouzaName = "Completed", activeDocType = "")
+                it.copy(isProcessing = false, isPaused = false, activeMouzaName = "Completed", activeDocType = "")
             }
             updateNotification("All Tasks Completed", tasks.size, tasks.size)
             stopForeground(STOP_FOREGROUND_DETACH)
@@ -125,8 +150,7 @@ class QueueDownloadService : Service() {
     }
 
     private suspend fun executeDownloadTask(task: DownloadTask) {
-        val app = application as? LRDownloaderApp
-        val appScope = app?.applicationScope ?: serviceScope
+        val appScope = (application as? LRDownloaderApp)?.applicationScope ?: serviceScope
         val downloadDao = AppDatabase.getDatabase(applicationContext, appScope).downloadDao()
 
         try {
@@ -134,7 +158,7 @@ class QueueDownloadService : Service() {
                 it.copy(activeDocType = "Fetching ${task.docType}...")
             }
 
-            val pdfBytes = fetchPdfBytesViaScrapfly(task.targetUrl)
+            val pdfBytes = fetchPdfBytesWithRetry(task.targetUrl, maxRetries = 3)
             if (pdfBytes.isEmpty()) return
 
             val uri: Uri = savePdfToMediaStoreAndGetUri(
@@ -154,10 +178,33 @@ class QueueDownloadService : Service() {
                     sizeBytes = pdfBytes.size.toLong()
                 )
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            // Handle Scrapfly rate limits or network failures
-            e.printStackTrace()
+            Log.e("QueueDownloadService", "Failed task ${task.fileName}: ${e.message}", e)
         }
+    }
+
+    /**
+     * Executes HTTP fetch with 3x exponential backoff (1s -> 2s -> 4s) for transient 429/5xx errors
+     * and enforces the 5-byte %PDF- (25 50 44 46 2D) magic-header gate.
+     */
+    private suspend fun fetchPdfBytesWithRetry(targetUrl: String, maxRetries: Int = 3): ByteArray {
+        var attempt = 0
+        var backoffMs = 1000L
+
+        while (attempt < maxRetries) {
+            attempt++
+            val bytes = fetchPdfBytesViaScrapfly(targetUrl)
+            if (bytes.isNotEmpty()) {
+                return bytes
+            }
+            if (attempt < maxRetries) {
+                delay(backoffMs)
+                backoffMs *= 2
+            }
+        }
+        return ByteArray(0)
     }
 
     private fun fetchPdfBytesViaScrapfly(targetUrl: String): ByteArray {
@@ -172,7 +219,8 @@ class QueueDownloadService : Service() {
                 setRequestProperty("User-Agent", "LRgetBD-Pro/2.1 (Android; LandArchiveBD)")
             }
 
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+            val code = connection.responseCode
+            if (code == HttpURLConnection.HTTP_OK) {
                 val bytes = connection.inputStream.use(InputStream::readBytes)
                 // Zero Hallucination Gate: verify %PDF- (25 50 44 46 2D) and > 1024 bytes
                 if (isValidPdfPayload(bytes)) {
@@ -182,6 +230,7 @@ class QueueDownloadService : Service() {
                     ByteArray(0)
                 }
             } else {
+                Log.w("QueueDownloadService", "HTTP $code from $targetUrl")
                 ByteArray(0)
             }
         } catch (e: Exception) {
@@ -244,6 +293,8 @@ class QueueDownloadService : Service() {
     }
 
     private fun stopQueue() {
+        notificationObserverJob?.cancel()
+        queueJob?.cancel()
         serviceScope.coroutineContext.cancelChildren()
         QueueStateManager.reset()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -253,8 +304,10 @@ class QueueDownloadService : Service() {
     // --- NOTIFICATION HELPERS ---
 
     private fun observeQueueStateForNotifications() {
-        serviceScope.launch {
+        notificationObserverJob?.cancel()
+        notificationObserverJob = serviceScope.launch {
             QueueStateManager.queueState.collectLatest { state ->
+                if (!state.isProcessing && !state.isPaused) return@collectLatest
                 val displayText = if (state.isPaused) "Paused - $currentNotifText" else currentNotifText
 
                 // Re-render the notification immediately when the pause state changes
@@ -306,6 +359,7 @@ class QueueDownloadService : Service() {
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setProgress(max, progress, false)
             .setOngoing(true) // Prevents swiping away
+            .setOnlyAlertOnce(true)
             .setContentIntent(pendingAppIntent)
             .addAction(pauseResumeAction) // Adds button 1
             .addAction(cancelAction)      // Adds button 2
@@ -337,6 +391,8 @@ class QueueDownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        notificationObserverJob?.cancel()
+        queueJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }

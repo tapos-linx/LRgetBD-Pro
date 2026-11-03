@@ -106,10 +106,10 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
         <div className="p-4 rounded-lg bg-emerald-900/20 border border-emerald-500/30 space-y-3">
           <div className="flex justify-between items-center">
             <span className="text-sm font-bold text-emerald-100">
-              Total Mouzas Found: {geo.selectedCount}
+              Total Mouzas Found: {geo.totalMouzasCount}
             </span>
             <span className="px-2 py-0.5 rounded bg-emerald-600 text-[10px] text-white font-bold">
-              Auto-Selected
+              All Mouzas Selected ({geo.selectedCount}/{geo.totalMouzasCount})
             </span>
           </div>
           
@@ -117,7 +117,7 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
             onClick={() => geo.areAllMouzasSelected ? geo.deselectAll() : geo.selectAll100Percent()}
             className="w-full px-4 py-2 rounded-lg bg-emerald-600 text-xs text-white font-semibold hover:bg-emerald-500"
           >
-            {geo.areAllMouzasSelected ? "Deselect All" : "Select All"}
+            {geo.areAllMouzasSelected ? "Deselect All Mouzas" : "Select All Mouzas"}
           </button>
         </div>
       )}

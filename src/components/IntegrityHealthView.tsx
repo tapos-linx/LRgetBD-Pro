@@ -256,9 +256,13 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {report.byDocumentType.map((dt) => {
-            const meta = ENDPOINT_MODE_META[dt.endpointType];
+            const meta = ENDPOINT_MODE_META[dt.endpointType] ?? {
+              path: `/${dt.endpointType}`,
+              titleBn: dt.endpointType,
+              titleEn: dt.endpointType,
+            };
             const expectedKb = (dt.expectedBaselineBytes / 1024).toFixed(0);
             const observedKb =
               dt.downloadedCount > 0

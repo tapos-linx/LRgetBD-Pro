@@ -73,10 +73,10 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
         <div>
           <h2 className="text-sm font-semibold text-white flex items-center gap-2">
             <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span>01. Cascading Area & 100% Auto-Mouza Selection (বিভাগ → জেলা → উপজেলা → ১০০% মৌজা সিলেকশন)</span>
+            <span>01. Cascading Area & All Mouza Selection (বিভাগ → জেলা → উপজেলা → সকল মৌজা নির্বাচন)</span>
           </h2>
           <p className="text-xs text-slate-400 font-bn mt-0.5">
-            উপজেলা বা ইউনিয়ন পরিবর্তন করলে তাৎক্ষণিকভাবে ১০০% মৌজা স্বয়ংক্রিয়ভাবে সিলেক্ট হয়ে ডাউনলোড কিউ প্রস্তুত করে।
+            উপজেলা নির্বাচন করার সাথে সাথে উক্ত উপজেলার সকল মৌজা গণনা, লোড ও সিলেক্ট হয়ে ডাউনলোড কিউ প্রস্তুত করে।
           </p>
         </div>
 
@@ -87,11 +87,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             <span className="text-emerald-400 font-bold">
               {geo.selectedCount}
             </span>
-            /{geo.totalMouzasCount} Selected (
-            {geo.totalMouzasCount > 0
-              ? `${Math.round((geo.selectedCount / geo.totalMouzasCount) * 100)}%`
-              : '0%'}
-            )
+            /{geo.totalMouzasCount} Selected
           </div>
 
           <button
@@ -99,7 +95,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             onClick={geo.selectAll100Percent}
             className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/30 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
           >
-            Select All (100%)
+            Select All Mouzas
           </button>
 
           <button
@@ -107,7 +103,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             onClick={geo.deselectAll}
             className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
           >
-            Deselect All (0%)
+            Deselect All
           </button>
 
           <button
@@ -400,7 +396,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             </div>
             <div className="text-[11px] font-mono-tabular text-slate-400">
               {geo.areAllMouzasSelected
-                ? `All ${geo.allMouzasForUpazila.length} Mouzas Selected (100%)`
+                ? `All ${geo.allMouzasForUpazila.length} Mouzas Selected`
                 : `${geo.selectedCount} of ${geo.allMouzasForUpazila.length} Selected (Manual Mode)`}
             </div>
           </div>

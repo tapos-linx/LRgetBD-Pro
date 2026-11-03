@@ -46,13 +46,13 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
     titleEn: '02. Application State Machine & User Flow',
     titleBn: '০২. অ্যাপ্লিকেশন স্টেট মেশিন ও ইউজার ফ্লো',
     summary:
-      'Details the 6-stage state machine including automatic 100% Mouza selection upon Upazila selection and sequential queue execution.',
+      'Details the 6-stage state machine including All Mouza Selection (সকল মৌজা নির্বাচন — e.g. all 176 Mouzas in Nabinagar) upon Upazila selection and sequential queue execution.',
     markdown: `# 02_AppFlow.md — Application State Machine & User Flow (README.md Equivalent)
 
 ## Cascading Filter & Mode State Machine
-1. **\`IDLE / GEO_INIT\`**: Load Division & District hierarchy (\`Chittagong\` → \`Brahmanbaria\`, \`Cumilla\`).
+1. **\`IDLE / GEO_INIT\`**: Load Division & District hierarchy (\`Chattogram\` → \`Brahmanbaria\`, \`Cumilla\`).
 2. **\`DISTRICT_SELECTED\`**: Unlock Upazila list; reset downstream selections.
-3. **\`UPAZILA_SELECTED\`**: **Automatically pre-select 100% of Mouzas** under the selected Upazila by default (with quick toggle for \`All 100%\` / \`None\` / \`20-No Kaitala South Union Filter\` / Search by JL No. or Bengali/English name).
+3. **\`UPAZILA_SELECTED\`**: **All Mouza Selection (সকল মৌজা নির্বাচন)** — counts, fetches, and selects all Mouzas within the selected Upazila (e.g., all **176 Mouzas** in Nabinagar Upazila) by default and generates the download queue (with quick toggle for \`All Mouzas\` / \`None\` / \`20-No Kaitala South Union Filter\` / Search by JL No. or Bengali/English name).
 4. **\`DOC_MODE_AND_SURVEY_CONFIGURED\`**:
    - Select Document Mode: \`Full Mouza Khatian Book PDF\`, \`Full Mouza Dag Book PDF\`, \`Survey Khatian Batch\`, \`Namjari Khatian Batch\`, or \`Mouza Map\`.
    - Select Survey Types: \`CS\`, \`SA\`, \`RS\`, \`BS/BRS\`, \`Mutation\`.
@@ -77,7 +77,7 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
 ## 2. Core Components
 - **Top App Bar:** Shows brand wordmark, single-line workspace navigation, and Android APK installer modal trigger.
 - **5-Mode Selector Cards:** Quick-switch buttons for *Survey Khatian*, *Namjari Khatian*, *Mouza Khatian Book (পূর্ণ মৌজা খতিয়ান বই)*, *Mouza Dag Book (পূর্ণ মৌজা দাগ বই)*, and *Mouza Map*.
-- **Cascading Geo Filter & 100% Mouza Chip Grid:** Auto-selects 100% of Mouzas when an Upazila (e.g., Nabinagar) is chosen.
+- **Cascading Geo Filter & All Mouza Selection Grid (সকল মৌজা নির্বাচন):** Counts, fetches, and selects all Mouzas within an Upazila (e.g., all 176 Mouzas in Nabinagar) as soon as the Upazila is chosen.
 - **Live Queue Console:** Displays real HTTP status codes, file size in KB/MB, \`%PDF-\` verification badge, and one-click direct open on \`https://eporcha.tech/...\`.`,
   },
   {
@@ -115,13 +115,13 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
     titleEn: '05. Geographic Hierarchy & Storage Schema',
     titleBn: '০৫. ভৌগোলিক হায়ারার্কি ও স্টোরেজ স্কিমা',
     summary:
-      'Brahmanbaria (all 9 Upazilas, Nabinagar, 20-No Kaitala South Union: Goalai JL-114, Kaitala JL-115) & Cumilla hierarchy plus IndexedDB stores.',
+      'Brahmanbaria (all 9 Upazilas, Nabinagar with all 176 Mouzas, 20-No Kaitala South Union: Goalai JL-114, Kaitala JL-115) & Cumilla hierarchy plus IndexedDB stores.',
     markdown: `# 05_Schema.md — Geographic Hierarchy & Storage Schema (MEMORY.md Equivalent)
 
 ## 1. Authoritative Geographic Dataset (\`src/data/geoHierarchy.ts\`)
 - **Brahmanbaria District (Code 12):**
-  - **Nabinagar Upazila:** 24 Mouzas pre-indexed, highlighting **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** — \`Goalai / গোয়ালী (JL-114)\`, \`Kaitala / কাইতলা (JL-115)\`, \`Noagaon / নোয়াগাঁও (JL-116)\`, \`Ramnagar / রামনগর (JL-117)\`, plus Balia, Mehari, Nilkhi, Tilinagar, Kedarkhola, Bitghar, Satmora, Rasullabad, Salimganj, Shyamgram, Boroikandi, Krishnanagar, Krishnanagar, Natghar, Ratanpur, Sreenagar, Vidyakut.
-  - All 9 Upazilas: Nabinagar, Brahmanbaria Sadar, Kasba, Ashuganj, Sarail, Nasirnagar, Akhaura, Bancharampur, Bijoynagar.
+  - **Nabinagar Upazila (Thana):** **176 Mouzas** pre-indexed across all 21 Unions & Nabinagar Pourashava, highlighting **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** — \`Goalai / গোয়ালী (JL-114)\`, \`Kaitala / কাইতলা (JL-115)\`, \`Noagaon / নোয়াগাঁও (JL-116)\`, \`Ramnagar / রামনগর (JL-117)\`, plus Barail, Birgaon, Krishnanagar, Natghar, Bidyakut, Nabinagar East, Nabinagar West, Kaitala North, Bitghar, Shibpur, Jinodpur, Laur Fatehpur, Ibrahimpur, Rasullabad, Satmora, Shampur, Barikandi, Salimganj, Ratanpur, Sreerampur, Mehari, Balia, and Majhigachha Unions.
+  - All 9 Upazilas: Nabinagar (176 Mouzas), Brahmanbaria Sadar, Kasba, Ashuganj, Sarail, Nasirnagar, Akhaura, Bancharampur, Bijoynagar.
 - **Cumilla District (Code 19):** Muradnagar, Debidwar, Brahmanpara.
 
 ## 2. Persistence Schema (\`IndexedDB\` & \`localStorage\`)

@@ -465,7 +465,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             No extraction tasks in this view
           </div>
           <p className="text-xs text-slate-400 max-w-md mx-auto">
-            Select a Document Mode, Upazila (e.g. Nabinagar — 100% Mouzas pre-selected), and Survey Types in the Extractor tab to enqueue authentic <code>eporcha.tech</code> tasks.
+            Select a Document Mode, Upazila (e.g. Nabinagar — All 176 Mouzas Selected), and Survey Types in the Extractor tab to enqueue authentic <code>eporcha.tech</code> tasks.
           </p>
         </div>
       ) : (

@@ -22,9 +22,10 @@
    - Displays active transport mode (`Native Capacitor HTTP (CORS-Free)` vs `Server/Web Proxy Relay`), active `eporcha.tech` endpoint path, and queue progress counters.
 3. **5-Mode Selector Cards:**
    - Interactive button cards for `mouza-vittik-khatian`, `mouza-vittik-dag`, `survey-khatian`, `namjari-khatian`, and `mouza-map`.
-4. **Cascading Geo Filter & 100% Mouza Selection Grid:**
+4. **Cascading Geo Filter & All Mouza Selection Grid (`সকল মৌজা নির্বাচন`):**
    - Division → District → Upazila → Union Filter (`All Unions`, `20-No Kaitala South Union`, etc.).
-   - Instant `Select All 100%`, `Clear All`, and `Kaitala South Union Only` controls.
+   - Selecting an Upazila immediately counts, fetches, and selects **all Mouzas within that Upazila** (e.g., all **176 Mouzas** in Nabinagar Upazila).
+   - Instant `Select All Mouzas`, `Clear All`, and `Kaitala South Union Only` controls.
    - Mouza cards displaying JL Number (`JL-114`), Bengali Name (`গোয়ালী`), English Name (`Goalai`), Union name, and available survey records.
 5. **Live Queue Console:**
    - Displays real HTTP status codes, byte lengths in KB/MB, `%PDF-` magic-byte verification status, transport mode used, and a direct external link (`https://eporcha.tech/...`) to inspect or download on the source portal.

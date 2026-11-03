@@ -13,7 +13,7 @@
        │  Unlock Upazilas (Nabinagar, Sadar, Kasba, etc.); reset downstream
        ▼
 [3. UPAZILA_SELECTED]
-       │  AUTO-SELECT 100% OF MOUZAS by default
+       │  ALL MOUZA SELECTION (সকল মৌজা নির্বাচন) within the selected Upazila (e.g., all 176 Mouzas in Nabinagar)
        │  Filter by Union (e.g. 20-No Kaitala South Union) or JL/Name search
        ▼
 [4. DOC_MODE_AND_SURVEY_CONFIGURED]
@@ -35,8 +35,8 @@
 
 1. **Step 1 — Select Extraction Mode (`EporchaEndpointType`):**
    - Choose between *Mouza Khatian Book (`পূর্ণ মৌজা খতিয়ান বই`)*, *Mouza Dag Book (`পূর্ণ মৌজা দাগ বই`)*, *Survey Khatian (`সার্ভে খতিয়ান`)*, *Namjari Khatian (`নামজারি খতিয়ান`)*, or *Mouza Map (`মৌজা ম্যাপ`)*.
-2. **Step 2 — Cascading Geography & 100% Mouza Auto-Selection:**
-   - Selecting an Upazila (such as **Nabinagar**) immediately selects **100% of its Mouzas** by default.
+2. **Step 2 — Cascading Geography & All Mouza Selection (`সকল মৌজা নির্বাচন`):**
+   - Selecting an Upazila (such as **Nabinagar**) immediately counts, fetches, and selects **all Mouzas within that Upazila** (all **176 Mouzas** in Nabinagar Thana/Upazila) and generates the download queue.
    - Users can narrow down to **20-No Kaitala South Union** (`Goalai / গোয়ালী`, `Kaitala / কাইতলা`, etc.) with a single union filter button or search box.
 3. **Step 3 — Survey & Book Format Configuration:**
    - Multi-select surveys (`CS`, `SA`, `RS`, `BS`, `MUTATION`).

@@ -12,9 +12,9 @@ import androidx.compose.runtime.*
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import bd.landarchive.lrgetbdpro.LRDownloaderApp
 import bd.landarchive.lrgetbdpro.data.db.AppDatabase
 import bd.landarchive.lrgetbdpro.data.db.RecordWithMouza
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,10 +26,10 @@ import java.util.zip.ZipOutputStream
 
 class PdfGalleryViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Initialize DAO using the Application context
+    // Reuse the singleton applicationScope from LRDownloaderApp to prevent CoroutineScope leaks
     private val downloadDao = AppDatabase.getDatabase(
         application,
-        CoroutineScope(Dispatchers.IO)
+        (application as? LRDownloaderApp)?.applicationScope ?: viewModelScope
     ).downloadDao()
 
     var recordList by mutableStateOf<List<RecordWithMouza>>(emptyList())
@@ -64,15 +64,30 @@ class PdfGalleryViewModel(application: Application) : AndroidViewModel(applicati
         loadDownloadedRecords()
     }
 
+    /**
+     * Loads all joined RecordWithMouza rows from Room and reconciles them against
+     * MediaStore on Dispatchers.IO so externally deleted files are automatically pruned.
+     */
     fun loadDownloadedRecords() {
         viewModelScope.launch {
             isLoading = true
-            // Fetch the joined data directly from Room on the IO thread
-            val records = withContext(Dispatchers.IO) {
-                downloadDao.getAllRecordsWithMouzas()
+            val context = getApplication<Application>().applicationContext
+            val verifiedRecords = withContext(Dispatchers.IO) {
+                val allRecords = downloadDao.getAllRecordsWithMouzas()
+                val validList = mutableListOf<RecordWithMouza>()
+                for (item in allRecords) {
+                    val uri = Uri.parse(item.record.mediaStoreUri)
+                    if (doesFileExist(context, uri)) {
+                        validList.add(item)
+                    } else {
+                        // Auto-prune orphaned Room rows if user deleted the PDF via system Files app
+                        downloadDao.deleteRecordByUri(item.record.mediaStoreUri)
+                    }
+                }
+                validList
             }
             withContext(Dispatchers.Main) {
-                recordList = records
+                recordList = verifiedRecords
                 isLoading = false
             }
         }
@@ -98,11 +113,11 @@ class PdfGalleryViewModel(application: Application) : AndroidViewModel(applicati
                     // 4. Update UI State
                     withContext(Dispatchers.Main) {
                         recordList = recordList.filter { it.record.id != recordWithMouza.record.id }
-                        clearPendingDelete() // From previous Android 11+ logic
+                        clearPendingDelete()
                     }
                 }
             } catch (e: SecurityException) {
-                // Handled via the IntentSender logic we built previously for Android 11+
+                // Handled via the IntentSender logic for Android 10/11+
                 triggerPermissionDialog(recordWithMouza, e, context)
             }
         }

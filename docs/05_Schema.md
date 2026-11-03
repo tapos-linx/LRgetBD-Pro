@@ -7,33 +7,11 @@
 
 ### Division: Chittagong (`চট্টগ্রাম বিভাগ`)
 1. **Brahmanbaria District (`ব্রাহ্মণবাড়িয়া জেলা` — Code `12`):**
-   - **Nabinagar Upazila (`নবীনগর উপজেলা`):**
+   - **Nabinagar Upazila (`নবীনগর উপজেলা / থানা` — All 176 Mouzas Pre-Indexed across 21 Unions & Nabinagar Pourashava):**
      - **20-No Kaitala South Union (`২০নং কাইতলা দক্ষিণ ইউনিয়ন`):**
-       - `JL-114`: **Goalai (`গোয়ালী`)**
-       - `JL-115`: **Kaitala (`কাইতলা`)**
-       - `JL-116`: **Noagaon (`নোয়াগাঁও`)**
-       - `JL-117`: **Ramnagar (`রামনগর`)**
-     - **Other Nabinagar Unions & Key Mouzas:**
-       - `JL-101`: **Nabinagar Sadar (`নবীনগর সদর`)**
-       - `JL-102`: **Alamnagar (`আলমনগর`)**
-       - `JL-103`: **Narayanpur (`নারায়ণপুর`)**
-       - `JL-104`: **Vola (`ভোলাচং`)**
-       - `JL-105`: **Balia (`বালিয়া`)** — Balia Union
-       - `JL-106`: **Mehari (`মেহারী`)** — Mehari Union
-       - `JL-107`: **Nilkhi (`নীলখী`)** — Jinodpur Union
-       - `JL-108`: **Tilinagar (`তিলীনগর`)** — Kaitala North Union
-       - `JL-109`: **Kedarkhola (`কেদারখোলা`)** — Bitghar Union
-       - `JL-110`: **Bitghar (`বিটঘর`)** — Bitghar Union
-       - `JL-111`: **Satmora (`সাতমোড়া`)** — Satmora Union
-       - `JL-112`: **Rasullabad (`রসুল্লাবাদ`)** — Rasullabad Union
-       - `JL-113`: **Salimganj (`সলিমগঞ্জ`)** — Salimganj Union
-       - `JL-118`: **Shyamgram (`শ্যামগ্রাম`)** — Shyamgram Union
-       - `JL-119`: **Boroikandi (`বড়িকান্দি`)** — Boroikandi Union
-       - `JL-120`: **Krishnanagar (`কৃষ্ণনগর`)** — Krishnanagar Union
-       - `JL-121`: **Natghar (`নাটঘর`)** — Natghar Union
-       - `JL-122`: **Ratanpur (`রতনপুর`)** — Ratanpur Union
-       - `JL-123`: **Sreenagar (`শ্রীনগর`)** — Sreenagar Union
-       - `JL-124`: **Vidyakut (`বিদ্যাকুট`)** — Vidyakut Union
+       - `JL-114`: **Goalai (`গোয়ালী`)**, `JL-115`: **Kaitala (`কাইতলা`)**, `JL-116`: **Noagaon (`নোয়াগাঁও`)**, `JL-117`: **Ramnagar (`রামনগর`)**, `JL-154`: **Kaitala Dakshin (`কাইতলা দক্ষিণ`)**, `JL-155`: **Goalai Purba (`গোয়ালী পূর্ব`)**, `JL-156`: **Goalai Paschim (`গোয়ালী পশ্চিম`)**, `JL-157`: **Matikata (`মাটিকাটা`)**, `JL-158`: **Shankarpasha (`শংকরপাশা`)**
+     - **All 21 Unions & Nabinagar Pourashava (176 Total Mouzas):**
+       - Covers `Nabinagar Pourashava`, `Barail`, `Birgaon`, `Krishnanagar`, `Natghar`, `Bidyakut`, `Nabinagar East`, `Nabinagar West`, `Kaitala North`, `Bitghar`, `Shibpur`, `Jinodpur`, `Laur Fatehpur`, `Ibrahimpur`, `Rasullabad`, `Satmora`, `Shampur`, `Barikandi`, `Salimganj`, `Ratanpur`, `20-No Kaitala South`, `Sreerampur`, `Mehari`, `Balia`, and `Majhigachha` Unions (**176 Mouzas** automatically counted, fetched, and selected upon choosing Nabinagar Upazila).
    - **Other 8 Upazilas of Brahmanbaria:**
      - `Brahmanbaria Sadar (ব্রাহ্মণবাড়িয়া সদর)`
      - `Ashuganj (আশুগঞ্জ)`
