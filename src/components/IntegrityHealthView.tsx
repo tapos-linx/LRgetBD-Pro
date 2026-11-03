@@ -12,10 +12,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  RefreshCw,
 } from 'lucide-react';
 import {
   EporchaEndpointType,
-  ProxyConfig,
   QueueTask,
 } from '../types/land';
 import { ENDPOINT_MODE_META } from '../data/geoHierarchy';
@@ -23,25 +23,19 @@ import { computeQueueIntegrityHealthReport } from '../services/queueEngine';
 
 interface IntegrityHealthViewProps {
   tasks: QueueTask[];
-  proxyConfig: ProxyConfig;
-  onUpdateProxyConfig: (next: ProxyConfig) => void;
   onRequeueFlagged: (filter?: {
     mouzaId?: string;
     endpointType?: EporchaEndpointType;
   }) => void;
-  onPrioritizeMouza: (mouzaId: string) => void;
-  onOpenQueueConsole: () => void;
+  onRunSingleTask: (taskId: string) => void;
 }
 
 type MouzaFilterTab = 'ALL' | 'FLAGGED' | 'HEALTHY' | 'PENDING';
 
 export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
   tasks,
-  proxyConfig,
-  onUpdateProxyConfig,
   onRequeueFlagged,
-  onPrioritizeMouza,
-  onOpenQueueConsole,
+  onRunSingleTask,
 }) => {
   const [mouzaFilter, setMouzaFilter] = useState<MouzaFilterTab>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -75,25 +69,10 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
     (m) => m.throttlingSuspected || m.flaggedCount > 0
   ).length;
 
-  const handleApplyAntiThrottleJitter = () => {
-    const nextMin = Math.max(900, proxyConfig.minDelayMs);
-    const nextMax = Math.max(1600, proxyConfig.maxDelayMs);
-    onUpdateProxyConfig({
-      ...proxyConfig,
-      concurrency: 1,
-      minDelayMs: nextMin,
-      maxDelayMs: nextMax,
-    });
-    setActionFeedback(
-      `Applied Anti-Throttling Profile: Concurrency locked to 1 request with ${nextMin}ms–${nextMax}ms polite jitter delay.`
-    );
-  };
-
   const riskBadgeConfig = {
     LOW: {
       label: 'LOW THROTTLING RISK',
-      classes:
-        'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
+      classes: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
       icon: ShieldCheck,
     },
     MODERATE: {
@@ -112,21 +91,15 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* 1. Executive Integrity Health & Throttling Telemetry Banner */}
       <section className="p-5 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
               <span
-                data-testid="throttling-risk-badge"
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-bold font-mono-tabular ${riskBadgeConfig.classes}`}
               >
                 <RiskIcon className="w-3.5 h-3.5 shrink-0" />
                 <span>{riskBadgeConfig.label}</span>
-              </span>
-              <span className="text-xs text-slate-400 font-mono-tabular">
-                Active Jitter Window: {proxyConfig.minDelayMs}ms–
-                {proxyConfig.maxDelayMs}ms · Concurrency: {proxyConfig.concurrency}x
               </span>
             </div>
 
@@ -144,16 +117,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
               type="button"
-              onClick={handleApplyAntiThrottleJitter}
-              className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-              title="Increase polite jitter delay to 900ms–1600ms and set concurrency to 1 to mitigate eporcha.tech rate-limiting"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Apply Anti-Throttle Jitter (900–1600ms)</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => {
                 onRequeueFlagged();
                 setActionFeedback(
@@ -166,14 +129,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
               <RotateCcw className="w-3.5 h-3.5" />
               <span>Re-Queue Flagged ({report.flaggedCount})</span>
             </button>
-
-            <button
-              type="button"
-              onClick={onOpenQueueConsole}
-              className="px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors cursor-pointer"
-            >
-              Open Live Queue Console →
-            </button>
           </div>
         </div>
 
@@ -184,7 +139,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
           </div>
         )}
 
-        {/* 4-Card Summary Metric Strip */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
           <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
             <div className="text-[11px] text-slate-400 flex items-center justify-between">
@@ -240,7 +194,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
         </div>
       </section>
 
-      {/* 2. Document-Type Size Cross-Reference & Throttling Matrix */}
       <section className="p-5 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
@@ -250,18 +203,16 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                 Document-Type Size Cross-Reference Matrix (Observed vs. Expected Baseline)
               </span>
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Flags specific document types that frequently return smaller-than-expected PDF/index streams due to upstream rate-limiting or throttling.
-            </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {report.byDocumentType.map((dt) => {
-            const meta = ENDPOINT_MODE_META[dt.endpointType] ?? {
+            const meta = (ENDPOINT_MODE_META && ENDPOINT_MODE_META[dt.endpointType]) || {
               path: `/${dt.endpointType}`,
               titleBn: dt.endpointType,
               titleEn: dt.endpointType,
+              description: '',
             };
             const expectedKb = (dt.expectedBaselineBytes / 1024).toFixed(0);
             const observedKb =
@@ -272,7 +223,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
             return (
               <div
                 key={dt.endpointType}
-                data-testid={`doctype-integrity-card-${dt.endpointType}`}
                 className={`p-4 rounded-xl border flex flex-col justify-between space-y-3 ${
                   dt.throttlingSuspected
                     ? 'bg-rose-950/20 border-rose-500/60'
@@ -284,7 +234,7 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[11px] font-mono-tabular text-emerald-400">
-                      {meta.path}
+                      {meta.path || `/${dt.endpointType}`}
                     </span>
                     {dt.throttlingSuspected ? (
                       <span className="px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[10px] font-bold">
@@ -353,7 +303,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
         </div>
       </section>
 
-      {/* 3. Mouza-Level Integrity & Smaller-Than-Expected File Size Breakdown */}
       <section className="p-5 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
@@ -363,9 +312,6 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                 Mouza-Level Integrity Breakdown ({report.byMouza.length} Mouzas in Queue)
               </span>
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Sorted by anomaly frequency to highlight specific Mouzas producing smaller-than-expected payloads.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -375,7 +321,7 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search Mouza by JL or name..."
+                placeholder="Search Mouza..."
                 className="pl-8 pr-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -383,10 +329,10 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
             <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800">
               {(
                 [
-                  { id: 'ALL', label: `All Mouzas (${report.byMouza.length})` },
+                  { id: 'ALL', label: `All (${report.byMouza.length})` },
                   {
                     id: 'FLAGGED',
-                    label: `Flagged / Throttled (${throttledMouzaCount})`,
+                    label: `Flagged (${throttledMouzaCount})`,
                   },
                   {
                     id: 'HEALTHY',
@@ -431,7 +377,7 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                   <th className="py-3 px-4">Size-Verified</th>
                   <th className="py-3 px-4">Partial / Truncated</th>
                   <th className="py-3 px-4 text-right">Avg Size Deviation</th>
-                  <th className="py-3 px-4">Throttling &amp; Integrity Status</th>
+                  <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
@@ -470,7 +416,7 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                       </td>
 
                       <td className="py-3 px-4 font-mono-tabular text-slate-200">
-                        {m.downloadedCount} / {m.totalTasks} Tasks
+                        {m.downloadedCount} / {m.totalTasks}
                       </td>
 
                       <td className="py-3 px-4 font-mono-tabular text-emerald-400 font-semibold">
@@ -480,10 +426,10 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                       <td className="py-3 px-4 font-mono-tabular">
                         {m.flaggedCount > 0 ? (
                           <span className="text-amber-300 font-semibold">
-                            {m.partialSuspectCount} Partial · {m.corruptedCount} Truncated ({m.flaggedRatePercent}%)
+                            {m.flaggedCount} ({m.flaggedRatePercent}%)
                           </span>
                         ) : (
-                          <span className="text-slate-400">0 Flagged</span>
+                          <span className="text-slate-400">0</span>
                         )}
                       </td>
 
@@ -500,8 +446,7 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                           >
                             {m.averageDeviationPercent >= 0
                               ? `+${m.averageDeviationPercent}%`
-                              : `${m.averageDeviationPercent}%`}{' '}
-                            vs avg
+                              : `${m.averageDeviationPercent}%`}
                           </span>
                         ) : (
                           <span className="text-slate-400">—</span>
@@ -512,24 +457,24 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                         {m.healthStatus === 'CRITICAL_TRUNCATION' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[11px] font-semibold">
                             <ShieldAlert className="w-3 h-3 shrink-0" />
-                            <span>Throttled / Truncated</span>
+                            <span>Truncated</span>
                           </span>
                         )}
                         {m.healthStatus === 'THROTTLED_SUSPECT' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[11px] font-semibold">
                             <AlertTriangle className="w-3 h-3 shrink-0" />
-                            <span>Smaller-Than-Expected Size</span>
+                            <span>Small Size</span>
                           </span>
                         )}
                         {m.healthStatus === 'HEALTHY' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold">
                             <ShieldCheck className="w-3 h-3 shrink-0" />
-                            <span>Integrity Verified</span>
+                            <span>Healthy</span>
                           </span>
                         )}
                         {m.healthStatus === 'PENDING' && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-400 text-[11px]">
-                            <span>Queued / Pending</span>
+                            <span>Pending</span>
                           </span>
                         )}
                       </td>
@@ -542,27 +487,25 @@ export const IntegrityHealthView: React.FC<IntegrityHealthViewProps> = ({
                               onClick={() => {
                                 onRequeueFlagged({ mouzaId: m.mouzaId });
                                 setActionFeedback(
-                                  `Re-queued ${m.flaggedCount} flagged task(s) for Mouza JL-${m.mouzaJlNo} (${m.mouzaNameEn}).`
+                                  `Re-queued ${m.flaggedCount} flagged task(s) for Mouza JL-${m.mouzaJlNo}.`
                                 );
                               }}
                               className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-200 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
                             >
                               <RotateCcw className="w-3 h-3" />
-                              <span>Re-Fetch ({m.flaggedCount})</span>
+                              <span>Re-Fetch</span>
                             </button>
                           )}
                           <button
                             type="button"
                             onClick={() => {
-                              onPrioritizeMouza(m.mouzaId);
-                              setActionFeedback(
-                                `Prioritized JL-${m.mouzaJlNo} (${m.mouzaNameEn}) to top of queue.`
-                              );
+                              const pending = tasks.find(t => t.mouzaId === m.mouzaId && t.status === 'QUEUED');
+                              if (pending) onRunSingleTask(pending.id);
                             }}
                             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
                           >
-                            <ArrowUpToLine className="w-3 h-3 text-emerald-400" />
-                            <span>Prioritize</span>
+                            <RefreshCw className="w-3 h-3 text-emerald-400" />
+                            <span>Fetch Next</span>
                           </button>
                         </div>
                       </td>

@@ -108,7 +108,7 @@ jobs:
           name: "LRgetBD Pro v1.0.${{ github.run_number }} (Production Android APK)"
           body: |
             ### LRgetBD Pro — Official Android APK Release (Build #${{ github.run_number }})
-            * **Direct APK Download:** [`LRgetBD-Pro.apk`](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk)
+            * **Direct APK Download:** [`LRgetBD-Pro.apk`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)
             * **Android Package ID:** `bd.landarchive.lrgetbdpro`
             * **Native CORS Bypass Enabled:** Built with `CapacitorHttp` enabled for direct `https://eporcha.tech` extraction.
           files: ./LRgetBD-Pro.apk

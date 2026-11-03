@@ -5,22 +5,33 @@ import {
   MouzaNode,
   UpazilaNode,
 } from '../types/land';
-import { GEO_HIERARCHY } from '../data/geoHierarchy';
+import { BANGLADESH_NATIONWIDE_HIERARCHY } from '../data/bangladeshNationwideHierarchy';
+import { geoDiscovery } from '../services/geoDiscoveryService';
+import { geoDb } from '../services/geographicDbService';
 
 export interface UseCascadingGeoReturn {
   // Cascading Selection State
-  selectedDivisionId: string;
-  selectedDistrictId: string;
-  selectedUpazilaId: string;
+  selectedDivisionId: string | null;
+  selectedDistrictId: string | null;
+  selectedUpazilaId: string | null;
   selectedUnion: string;
   mouzaSearch: string;
   selectedMouzaIds: string[];
 
-  // Active Hierarchy Nodes
-  activeDivision: DivisionNode;
-  activeDistrict: DistrictNode;
-  activeUpazila: UpazilaNode;
+  // Data Lists
+  divisions: DivisionNode[];
+  districts: DistrictNode[];
+  upazilas: UpazilaNode[];
   allMouzasForUpazila: MouzaNode[];
+  
+  // Status
+  isDiscovering: boolean;
+  discoveryStatus: string | null;
+
+  // Active Hierarchy Nodes
+  activeDivision: DivisionNode | null;
+  activeDistrict: DistrictNode | null;
+  activeUpazila: UpazilaNode | null;
   availableUnions: string[];
   visibleMouzas: MouzaNode[];
   areAllMouzasSelected: boolean;
@@ -28,9 +39,9 @@ export interface UseCascadingGeoReturn {
   totalMouzasCount: number;
 
   // Actions
-  setSelectedDivisionId: (divId: string) => void;
-  setSelectedDistrictId: (distId: string) => void;
-  setSelectedUpazilaId: (upzId: string) => void;
+  setSelectedDivisionId: (divId: string | null) => void;
+  setSelectedDistrictId: (distId: string | null) => void;
+  setSelectedUpazilaId: (upzId: string | null) => void;
   setSelectedUnion: (union: string) => void;
   setMouzaSearch: (search: string) => void;
   setSelectedMouzaIds: React.Dispatch<React.SetStateAction<string[]>>;
@@ -42,86 +53,139 @@ export interface UseCascadingGeoReturn {
   toggleMouza: (mouzaId: string) => void;
   selectUnionOnly: (unionName: string) => void;
 
-  // Custom Mouza Import / Registration
-  customMouzasByUpazila: Record<string, MouzaNode[]>;
-  addCustomMouza: (mouza: Omit<MouzaNode, 'id'>) => MouzaNode;
-  importCustomMouzasJsonOrCsv: (content: string) => number;
+  // Discovery Trigger
+  retryDiscovery: () => void;
 }
 
 export function useCascadingGeo(): UseCascadingGeoReturn {
-  const [selectedDivisionId, setSelectedDivisionIdState] = useState<string>(
-    GEO_HIERARCHY[0].id
-  );
-  const [selectedDistrictId, setSelectedDistrictIdState] = useState<string>(
-    GEO_HIERARCHY[0].districts[0].id
-  );
-  const [selectedUpazilaId, setSelectedUpazilaIdState] = useState<string>(
-    GEO_HIERARCHY[0].districts[0].upazilas[0].id
-  );
-  const [selectedUnion, setSelectedUnionState] = useState<string>('ALL');
+  const [selectedDivisionId, setSelectedDivisionId] = useState<string | null>(null);
+  const [selectedDistrictId, setSelectedDistrictId] = useState<string | null>(null);
+  const [selectedUpazilaId, setSelectedUpazilaId] = useState<string | null>(null);
+  const [selectedUnion, setSelectedUnion] = useState<string>('ALL');
   const [mouzaSearch, setMouzaSearch] = useState<string>('');
-  const [customMouzasByUpazila, setCustomMouzasByUpazila] = useState<
-    Record<string, MouzaNode[]>
-  >({});
+  
+  const [districts, setDistricts] = useState<DistrictNode[]>([]);
+  const [upazilas, setUpazilas] = useState<UpazilaNode[]>([]);
+  const [mouzas, setMouzas] = useState<MouzaNode[]>([]);
+  
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [discoveryStatus, setDiscoveryStatus] = useState<string | null>(null);
+
+  const divisions = BANGLADESH_NATIONWIDE_HIERARCHY;
 
   // Active Division
   const activeDivision = useMemo(() => {
-    return (
-      GEO_HIERARCHY.find((d) => d.id === selectedDivisionId) || GEO_HIERARCHY[0]
-    );
-  }, [selectedDivisionId]);
+    return divisions.find((d) => d.id === selectedDivisionId) || null;
+  }, [selectedDivisionId, divisions]);
 
   // Active District
   const activeDistrict = useMemo(() => {
-    return (
-      activeDivision.districts.find((d) => d.id === selectedDistrictId) ||
-      activeDivision.districts[0]
-    );
-  }, [activeDivision, selectedDistrictId]);
+    return districts.find((d) => d.id === selectedDistrictId) || null;
+  }, [selectedDistrictId, districts]);
 
   // Active Upazila
   const activeUpazila = useMemo(() => {
-    return (
-      activeDistrict.upazilas.find((u) => u.id === selectedUpazilaId) ||
-      activeDistrict.upazilas[0]
-    );
-  }, [activeDistrict, selectedUpazilaId]);
+    return upazilas.find((u) => u.id === selectedUpazilaId) || null;
+  }, [selectedUpazilaId, upazilas]);
 
-  // Combined Mouzas for Active Upazila (Pre-loaded authoritative dataset + custom registered)
-  const allMouzasForUpazila = useMemo(() => {
-    const customs = customMouzasByUpazila[activeUpazila.id] || [];
-    return [...activeUpazila.mouzas, ...customs];
-  }, [activeUpazila, customMouzasByUpazila]);
+  // Combined Mouzas
+  const allMouzasForUpazila = mouzas;
 
-  // Available Unions in Active Upazila
+  // Available Unions
   const availableUnions = useMemo(() => {
     const set = new Set<string>();
     for (const m of allMouzasForUpazila) {
       if (m.unionNameEn) set.add(m.unionNameEn);
     }
-    return Array.from(set);
+    return Array.from(set).sort();
   }, [allMouzasForUpazila]);
 
-  // Filtered Mouzas according to union filter
+  // Filtered Mouzas
   const unionFilteredMouzas = useMemo(() => {
     if (selectedUnion === 'ALL') return allMouzasForUpazila;
     return allMouzasForUpazila.filter((m) => m.unionNameEn === selectedUnion);
   }, [allMouzasForUpazila, selectedUnion]);
 
-  // Selected Mouza IDs (Initial state: 100% of first Upazila's Mouzas)
-  const [selectedMouzaIds, setSelectedMouzaIds] = useState<string[]>(() =>
-    GEO_HIERARCHY[0].districts[0].upazilas[0].mouzas.map((m) => m.id)
-  );
+  const [selectedMouzaIds, setSelectedMouzaIds] = useState<string[]>([]);
 
-  // Mandatory 100% Auto-Mouza Selection Rule:
-  // Whenever selectedUpazila or selectedUnion changes, automatically compute available Mouzas
-  // and immediately set selectedMouzaIds to 100% of those Mouzas by default
-  useEffect(() => {
-    const allScopeIds = unionFilteredMouzas.map((m) => m.id);
-    setSelectedMouzaIds(allScopeIds);
-  }, [activeUpazila.id, selectedUnion]);
+  // 1. Division Selection Handler (Phase 7)
+  const handleDivisionChange = useCallback(async (divId: string | null) => {
+    setSelectedDivisionId(divId);
+    setSelectedDistrictId(null);
+    setSelectedUpazilaId(null);
+    setDistricts([]);
+    setUpazilas([]);
+    setMouzas([]);
+    setSelectedMouzaIds([]);
+    
+    if (divId) {
+      setIsDiscovering(true);
+      setDiscoveryStatus('Fetching districts...');
+      // Try DB first
+      let cached = await geoDb.getDistricts(divId);
+      if (cached.length === 0) {
+        cached = await geoDiscovery.discoverDistricts(divId);
+      }
+      setDistricts(cached);
+      setIsDiscovering(false);
+      setDiscoveryStatus(cached.length > 0 ? null : 'No districts found for this division.');
+    }
+  }, []);
 
-  // Visible Mouzas after live search by JL No., Bengali name, or English name
+  // 2. District Selection Handler
+  const handleDistrictChange = useCallback(async (distId: string | null) => {
+    setSelectedDistrictId(distId);
+    setSelectedUpazilaId(null);
+    setUpazilas([]);
+    setMouzas([]);
+    setSelectedMouzaIds([]);
+    
+    if (distId) {
+      setIsDiscovering(true);
+      setDiscoveryStatus('Fetching upazilas...');
+      let cached = await geoDb.getUpazilas(distId);
+      if (cached.length === 0) {
+        cached = await geoDiscovery.discoverUpazilas(distId);
+      }
+      setUpazilas(cached);
+      setIsDiscovering(false);
+      setDiscoveryStatus(cached.length > 0 ? null : 'No upazilas found for this district.');
+    }
+  }, []);
+
+  // 3. Upazila Selection Handler (Phase 4 & 5)
+  const handleUpazilaChange = useCallback(async (upzId: string | null) => {
+    setSelectedUpazilaId(upzId);
+    setMouzas([]);
+    setSelectedMouzaIds([]);
+    
+    if (upzId) {
+      setIsDiscovering(true);
+      setDiscoveryStatus('Discovering actual Mouza records...');
+      let cached = await geoDb.getMouzas(upzId);
+      if (cached.length === 0) {
+        cached = await geoDiscovery.discoverMouzas(upzId);
+      }
+      setMouzas(cached);
+      
+      // Automatic selection of ALL valid discovered Mouzas (Phase 4 Step 5)
+      if (cached.length > 0) {
+        setSelectedMouzaIds(cached.map(m => m.id));
+        setDiscoveryStatus(null);
+      } else {
+        setDiscoveryStatus('No verified Mouza records found.');
+      }
+      setIsDiscovering(false);
+    }
+  }, []);
+
+  const retryDiscovery = useCallback(() => {
+    if (selectedUpazilaId) handleUpazilaChange(selectedUpazilaId);
+    else if (selectedDistrictId) handleDistrictChange(selectedDistrictId);
+    else if (selectedDivisionId) handleDivisionChange(selectedDivisionId);
+  }, [selectedDivisionId, selectedDistrictId, selectedUpazilaId, handleDivisionChange, handleDistrictChange, handleUpazilaChange]);
+
+  // Visible Mouzas
   const visibleMouzas = useMemo(() => {
     if (!mouzaSearch.trim()) return unionFilteredMouzas;
     const query = mouzaSearch.trim().toLowerCase();
@@ -129,14 +193,15 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       return (
         m.jlNo.toLowerCase().includes(query) ||
         m.nameEn.toLowerCase().includes(query) ||
-        m.nameBn.includes(mouzaSearch.trim()) ||
-        m.unionNameEn.toLowerCase().includes(query) ||
-        m.unionNameBn.includes(mouzaSearch.trim())
+        m.nameBn.includes(mouzaSearch.trim())
       );
     });
   }, [unionFilteredMouzas, mouzaSearch]);
 
-  // Fast Batch Controls
+  const areAllMouzasSelected =
+    unionFilteredMouzas.length > 0 &&
+    unionFilteredMouzas.every((m) => selectedMouzaIds.includes(m.id));
+
   const selectAll100Percent = useCallback(() => {
     setSelectedMouzaIds(unionFilteredMouzas.map((m) => m.id));
   }, [unionFilteredMouzas]);
@@ -164,7 +229,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
 
   const selectUnionOnly = useCallback(
     (unionName: string) => {
-      setSelectedUnionState(unionName);
+      setSelectedUnion(unionName);
       const matching = allMouzasForUpazila.filter(
         (m) => unionName === 'ALL' || m.unionNameEn === unionName
       );
@@ -172,139 +237,6 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     },
     [allMouzasForUpazila]
   );
-
-  // Cascading Selection Handlers
-  const setSelectedDivisionId = useCallback((divId: string) => {
-    setSelectedDivisionIdState(divId);
-    const div = GEO_HIERARCHY.find((d) => d.id === divId) || GEO_HIERARCHY[0];
-    const firstDist = div.districts[0];
-    const firstUpz = firstDist.upazilas[0];
-    setSelectedDistrictIdState(firstDist.id);
-    setSelectedUpazilaIdState(firstUpz.id);
-    setSelectedUnionState('ALL');
-    setMouzaSearch('');
-  }, []);
-
-  const setSelectedDistrictId = useCallback(
-    (distId: string) => {
-      setSelectedDistrictIdState(distId);
-      const dist =
-        activeDivision.districts.find((d) => d.id === distId) ||
-        activeDivision.districts[0];
-      const firstUpz = dist.upazilas[0];
-      setSelectedUpazilaIdState(firstUpz.id);
-      setSelectedUnionState('ALL');
-      setMouzaSearch('');
-    },
-    [activeDivision]
-  );
-
-  const setSelectedUpazilaId = useCallback((upzId: string) => {
-    setSelectedUpazilaIdState(upzId);
-    setSelectedUnionState('ALL');
-    setMouzaSearch('');
-  }, []);
-
-  const setSelectedUnion = useCallback((union: string) => {
-    setSelectedUnionState(union);
-  }, []);
-
-  // Custom Mouza Registration
-  const addCustomMouza = useCallback(
-    (mouza: Omit<MouzaNode, 'id'>): MouzaNode => {
-      const id = `mz-custom-${activeUpazila.id}-${Date.now()}-${Math.floor(
-        Math.random() * 1000
-      )}`;
-      const fullMouza: MouzaNode = { ...mouza, id };
-      setCustomMouzasByUpazila((prev) => ({
-        ...prev,
-        [activeUpazila.id]: [...(prev[activeUpazila.id] || []), fullMouza],
-      }));
-      setSelectedMouzaIds((prev) => [...prev, id]);
-      return fullMouza;
-    },
-    [activeUpazila.id]
-  );
-
-  // Custom Mouza CSV / JSON Batch Import
-  const importCustomMouzasJsonOrCsv = useCallback(
-    (content: string): number => {
-      let importedCount = 0;
-      const trimmed = content.trim();
-      const newNodes: MouzaNode[] = [];
-
-      try {
-        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-          const parsed = JSON.parse(trimmed);
-          const list = Array.isArray(parsed) ? parsed : [parsed];
-          list.forEach((item, idx) => {
-            if (item.jlNo && (item.nameEn || item.nameBn)) {
-              newNodes.push({
-                id: `mz-import-${activeUpazila.id}-${Date.now()}-${idx}`,
-                jlNo: String(item.jlNo).trim(),
-                nameEn: item.nameEn?.trim() || `Mouza-${item.jlNo}`,
-                nameBn: item.nameBn?.trim() || item.nameEn?.trim() || '',
-                unionNameEn: item.unionNameEn?.trim() || 'Imported Union',
-                unionNameBn: item.unionNameBn?.trim() || 'ইমপোর্টেড ইউনিয়ন',
-                availableSurveys: item.availableSurveys || [
-                  'CS',
-                  'SA',
-                  'RS',
-                  'BS',
-                  'MUTATION',
-                ],
-                estimatedKhatians: Number(item.estimatedKhatians) || 300,
-                estimatedDags: Number(item.estimatedDags) || 750,
-                mapSheets: item.mapSheets || [1],
-              });
-              importedCount++;
-            }
-          });
-        } else {
-          // CSV Parsing (jlNo, nameEn, nameBn, unionNameEn)
-          const lines = trimmed.split(/\r?\n/);
-          lines.forEach((line, idx) => {
-            const parts = line.split(',').map((p) => p.trim());
-            if (parts.length >= 2 && parts[0] && parts[1]) {
-              newNodes.push({
-                id: `mz-csv-${activeUpazila.id}-${Date.now()}-${idx}`,
-                jlNo: parts[0],
-                nameEn: parts[1],
-                nameBn: parts[2] || parts[1],
-                unionNameEn: parts[3] || 'Imported Union',
-                unionNameBn: parts[3] || 'ইমপোর্টেড ইউনিয়ন',
-                availableSurveys: ['CS', 'SA', 'RS', 'BS', 'MUTATION'],
-                estimatedKhatians: 300,
-                estimatedDags: 750,
-                mapSheets: [1],
-              });
-              importedCount++;
-            }
-          });
-        }
-
-        if (newNodes.length > 0) {
-          setCustomMouzasByUpazila((prev) => ({
-            ...prev,
-            [activeUpazila.id]: [...(prev[activeUpazila.id] || []), ...newNodes],
-          }));
-          setSelectedMouzaIds((prev) => [
-            ...prev,
-            ...newNodes.map((n) => n.id),
-          ]);
-        }
-      } catch (err) {
-        console.error('Failed to import custom mouzas:', err);
-      }
-
-      return importedCount;
-    },
-    [activeUpazila.id]
-  );
-
-  const areAllMouzasSelected =
-    unionFilteredMouzas.length > 0 &&
-    unionFilteredMouzas.every((m) => selectedMouzaIds.includes(m.id));
 
   return {
     selectedDivisionId,
@@ -314,19 +246,26 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     mouzaSearch,
     selectedMouzaIds,
 
+    divisions,
+    districts,
+    upazilas,
+    allMouzasForUpazila,
+    
+    isDiscovering,
+    discoveryStatus,
+
     activeDivision,
     activeDistrict,
     activeUpazila,
-    allMouzasForUpazila,
     availableUnions,
     visibleMouzas,
     areAllMouzasSelected,
     selectedCount: selectedMouzaIds.length,
     totalMouzasCount: allMouzasForUpazila.length,
 
-    setSelectedDivisionId,
-    setSelectedDistrictId,
-    setSelectedUpazilaId,
+    setSelectedDivisionId: handleDivisionChange,
+    setSelectedDistrictId: handleDistrictChange,
+    setSelectedUpazilaId: handleUpazilaChange,
     setSelectedUnion,
     setMouzaSearch,
     setSelectedMouzaIds,
@@ -336,9 +275,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     invertSelection,
     toggleMouza,
     selectUnionOnly,
-
-    customMouzasByUpazila,
-    addCustomMouza,
-    importCustomMouzasJsonOrCsv,
+    
+    retryDiscovery
   };
 }

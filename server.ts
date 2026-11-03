@@ -86,8 +86,7 @@ async function startServer() {
   // Live GitHub Releases Check for tapos-linx/LR_Mass_Downloader (with optional ?repo=owner/repo override)
   app.get('/api/github-release-check', async (req, res) => {
     const requestedRepo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
-    const isValidSlug = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(requestedRepo);
-    const repo = isValidSlug ? requestedRepo : 'tapos-linx/LR_Mass_Downloader';
+    const repo = isValidSlug ? requestedRepo : 'tapos-linx/LRgetBD-Pro';
     try {
       const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
         headers: {
@@ -192,7 +191,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`LR Mass Downloader (LRgetBD v2.1) server listening on http://0.0.0.0:${PORT}`);
+    console.log(`LRgetBD Pro (v2.1) server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

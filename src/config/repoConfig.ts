@@ -1,18 +1,18 @@
 export const REPO_CONFIG = {
   owner: 'tapos-linx',
-  repo: 'LR_Mass_Downloader',
-  fullSlug: 'tapos-linx/LR_Mass_Downloader',
+  repo: 'LRgetBD-Pro',
+  fullSlug: 'tapos-linx/LRgetBD-Pro',
   appName: 'LRgetBD Pro',
   appId: 'bd.landarchive.lrgetbdpro',
   standardApkFilename: 'LRgetBD-Pro.apk',
   minValidApkSizeBytes: 1048576, // 1 MB (1,048,576 bytes)
-  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest',
+  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest',
   directFallbackAssetUrl:
-    'https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk',
-  actionsUrl: 'https://github.com/tapos-linx/LR_Mass_Downloader/actions',
-  releasesPageUrl: 'https://github.com/tapos-linx/LR_Mass_Downloader/releases',
+    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk',
+  actionsUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/actions',
+  releasesPageUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/releases',
   workflowFilePath: '.github/workflows/build-apk.yml',
-  repoStorageKey: 'lr_mass_downloader_repo_slug_v1',
+  repoStorageKey: 'lrgetbd_pro_repo_slug_v2',
 } as const;
 
 export function buildRepoEndpoints(slug: string = REPO_CONFIG.fullSlug) {
@@ -143,7 +143,7 @@ jobs:
           name: "LRgetBD Pro v1.0.\${{ github.run_number }} (Production Android APK)"
           body: |
             ### LRgetBD Pro — Official Android APK Release (Build #\${{ github.run_number }})
-            * **Direct APK Download:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk)
+            * **Direct APK Download:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)
             * **Android Package ID:** \`bd.landarchive.lrgetbdpro\`
             * **Native CORS Bypass Enabled:** Built with \`CapacitorHttp\` enabled for direct \`https://eporcha.tech\` extraction.
           files: ./LRgetBD-Pro.apk

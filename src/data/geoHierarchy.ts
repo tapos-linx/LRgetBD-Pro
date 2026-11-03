@@ -8,12 +8,7 @@ import {
 } from '../types/land';
 import {
   BANGLADESH_NATIONWIDE_HIERARCHY,
-  createMouzaList,
-  generateMouzasForUpazila,
-  NABINAGAR_MOUZAS,
 } from './bangladeshNationwideHierarchy';
-
-export { createMouzaList, generateMouzasForUpazila, NABINAGAR_MOUZAS };
 
 export const ALL_ENDPOINT_TYPES: EporchaEndpointType[] = [
   'mouza-vittik-khatian',

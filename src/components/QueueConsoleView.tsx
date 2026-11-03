@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpToLine,
   CheckCircle2,
+  CheckSquare,
   Download,
   ExternalLink,
   FileEdit,
@@ -19,6 +20,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Square,
   Trash2,
 } from 'lucide-react';
 import { ProxyConfig, QueueTask, TransportMode } from '../types/land';
@@ -45,6 +47,7 @@ interface QueueConsoleViewProps {
   onReorderTasks?: (sourceTaskId: string, targetTaskId: string) => void;
   onMoveTaskPriority?: (taskId: string, direction: 'UP' | 'DOWN' | 'TOP') => void;
   onPrioritizeMouza?: (mouzaId: string) => void;
+  onBulkAction?: (taskIds: string[], action: 'FORCE_FETCH' | 'DELETE' | 'MOVE_TO_TOP') => void;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
 }
@@ -76,6 +79,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   onReorderTasks,
   onMoveTaskPriority,
   onPrioritizeMouza,
+  onBulkAction,
   isBundlingZip,
   lastBundleStatus,
 }) => {
@@ -83,6 +87,41 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
   const [priorityFeedback, setPriorityFeedback] = useState<string | null>(null);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+
+  const toggleAllVisibleTasks = (visibleTasks: QueueTask[]) => {
+    setSelectedTaskIds((prev) => {
+      const allSelected = visibleTasks.length > 0 && visibleTasks.every((t) => prev.has(t.id));
+      if (allSelected) {
+        const next = new Set(prev);
+        visibleTasks.forEach((t) => next.delete(t.id));
+        return next;
+      } else {
+        const next = new Set(prev);
+        visibleTasks.forEach((t) => next.add(t.id));
+        return next;
+      }
+    });
+  };
+
+  const handleBulkActionExecute = (action: 'FORCE_FETCH' | 'DELETE' | 'MOVE_TO_TOP') => {
+    if (onBulkAction && selectedTaskIds.size > 0) {
+      onBulkAction(Array.from(selectedTaskIds), action);
+      setSelectedTaskIds(new Set());
+    }
+  };
 
   // Unique Mouzas in the current queue for 1-click Mouza prioritization
   const uniqueMouzasInQueue = useMemo(() => {
@@ -458,6 +497,53 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
         </div>
       )}
 
+      {/* Bulk Actions Toolbar */}
+      {selectedTaskIds.size > 0 && (
+        <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <div className="bg-emerald-500 text-slate-950 text-xs font-bold px-2 py-1 rounded">
+              {selectedTaskIds.size} Selected
+            </div>
+            <span className="text-xs text-emerald-200 font-medium">
+              Apply bulk actions to selected tasks:
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleBulkActionExecute('FORCE_FETCH')}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Force Fetch</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleBulkActionExecute('MOVE_TO_TOP')}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowUpToLine className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Move to Top</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleBulkActionExecute('DELETE')}
+              className="px-3 py-1.5 rounded-lg bg-red-950/60 hover:bg-red-900/60 border border-red-500/30 text-red-200 text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              <span>Delete</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedTaskIds(new Set())}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Queue Table */}
       {filteredTasks.length === 0 ? (
         <div className="p-12 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-2">
@@ -474,6 +560,19 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/60 text-[11px] font-semibold text-slate-400">
+                  <th className="py-3 px-3 w-10">
+                    <button
+                      type="button"
+                      onClick={() => toggleAllVisibleTasks(filteredTasks)}
+                      className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer"
+                    >
+                      {filteredTasks.length > 0 && filteredTasks.every((t) => selectedTaskIds.has(t.id)) ? (
+                        <CheckSquare className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+                  </th>
                   <th className="py-3 px-3 w-24">Priority / Drag</th>
                   <th className="py-3 px-4">Mouza &amp; Survey</th>
                   <th className="py-3 px-4">Forensic Filename &amp; Mode</th>
@@ -537,9 +636,24 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                           ? 'opacity-50 bg-slate-800/70'
                           : isDragOver
                           ? 'bg-emerald-950/60 border-t-2 border-t-emerald-400'
+                          : selectedTaskIds.has(task.id)
+                          ? 'bg-emerald-950/20 hover:bg-emerald-950/30'
                           : 'hover:bg-slate-800/40'
                       }`}
                     >
+                      <td className="py-3.5 px-3 align-top">
+                        <button
+                          type="button"
+                          onClick={() => toggleTaskSelection(task.id)}
+                          className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer"
+                        >
+                          {selectedTaskIds.has(task.id) ? (
+                            <CheckSquare className="w-4 h-4 text-emerald-400" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+                      </td>
                       <td className="py-3.5 px-3 align-top font-mono-tabular">
                         <div className="flex items-center gap-1.5">
                           <span

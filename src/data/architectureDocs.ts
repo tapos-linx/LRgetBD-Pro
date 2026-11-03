@@ -16,28 +16,28 @@ export const ARCHITECTURE_DOCS: ArchitectureDocItem[] = [
     titleEn: '01. Product Requirements Document (PRD)',
     titleBn: '০১. প্রোডাক্ট রিকোয়ারমেন্টস ডকুমেন্ট (eporcha.tech)',
     summary:
-      'Defines the 5 open-access eporcha.tech endpoints, Brahmanbaria/Nabinagar/20-No Kaitala South Union scope, forensic file naming, and %PDF- verification gate.',
+      'Defines the 5 open-access eporcha.tech endpoints, forensic file naming, and %PDF- verification gate.',
     markdown: `# 01_PRD.md — Product Requirements Document (SKILL.md Equivalent)
 **Project:** LRgetBD Pro (LR Mass Downloader / LandArchive BD v2.1 — \`eporcha.tech\` Open-Access Edition)  
 **Target Portal:** \`https://eporcha.tech\` (Zero-Login, Open-Access Endpoints)  
-**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (\`bd.landarchive.lrgetbdpro\` · \`tapos-linx/LR_Mass_Downloader\`)
+**Platforms:** Mobile-First Web SPA + Capacitor 6 Android Native APK (\`bd.landarchive.lrgetbdpro\` · \`tapos-linx/LRgetBD-Pro\`)
 
 ## 1. Core Objective
 Provide a 100% free, zero-payment, zero-hallucination bulk extraction, binary verification (\`%PDF-\`), and archival engine powered exclusively by **\`https://eporcha.tech\`** for Bangladesh land records. Do NOT use paid or login-walled portals (\`dlrms.land.gov.bd\` or \`eporcha.gov.bd\`).
 
 ## 2. Five Supported Document & Extraction Modes (\`EporchaDocType\`)
-1. **\`SURVEY_KHATIAN\` (\`https://eporcha.tech/survey-khatian\`)**: Cascading lookup: Division → District → Upazila → Survey Type (CS, SA, RS, BS/BRS) → Mouza (মৌজা ও JL নম্বর). Extracts Khatian list and individual Khatian PDFs.
-2. **\`NAMJARI_KHATIAN\` (\`https://eporcha.tech/namjari-khatian\`)**: Cascading lookup: District → Upazila → Mutation Survey → Mouza → Khatian/Dag/Owner extraction.
-3. **\`MOUZA_KHATIAN_BOOK\` (\`https://eporcha.tech/mouza-vittik-khatian\`)**: Generates and downloads the Complete Mouza Khatian Book PDF ("পূর্ণ মৌজা PDF ডাউনলোড") for CS, SA, RS, BS, or Mutation, supporting format variants (\`নতুন ধরন\` / \`পুরনো ধরন\` and \`রঙিন\` / \`সাদা-কালো\`).
-4. **\`MOUZA_DAG_BOOK\` (\`https://eporcha.tech/mouza-vittik-dag\`)**: Generates and downloads the Complete Mouza Dag Book PDF ("পূর্ণ মৌজা দাগ বই PDF ডাউনলোড") mapping every serial Dag number in a Mouza to its corresponding Khatian numbers.
-5. **\`MOUZA_MAP\` (\`https://eporcha.tech/mouza-map\`)**: Searches and downloads available Mouza Map sheets (\`মৌজা ম্যাপ PDF\`) by Mouza and Sheet number.
+1. **\`SURVEY_KHATIAN\`**: Cascading lookup: Division → District → Upazila → Survey Type (CS, SA, RS, BS/BRS) → Mouza. Extracts Khatian list and individual Khatian PDFs.
+2. **\`NAMJARI_KHATIAN\`**: Cascading lookup: District → Upazila → Mutation Survey → Mouza → Khatian/Dag/Owner extraction.
+3. **\`MOUZA_KHATIAN_BOOK\`**: Generates and downloads the Complete Mouza Khatian Book PDF for CS, SA, RS, BS, or Mutation.
+4. **\`MOUZA_DAG_BOOK\`**: Generates and downloads the Complete Mouza Dag Book PDF mapping serial Dag numbers to Khatian numbers.
+5. **\`MOUZA_MAP\`**: Searches and downloads available Mouza Map sheets by Mouza and Sheet number.
 
-## 3. Target Geography (Primary Scope)
-Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria District** (specifically **Nabinagar Upazila** — including **20-No Kaitala South Union**, **Goalai / গোয়ালী** JL-114, **Kaitala / কাইতলা** JL-115, Noagaon JL-116, Ramnagar JL-117, and all 9 Upazilas of Brahmanbaria) and **Cumilla District**.
+## 3. Target Geography (Nationwide Discovery)
+Full cascading support for all 8 Divisions and 64 Districts of Bangladesh. Verified live discovery logic fetches all Mouzas within an Upazila (e.g., 176 Mouzas in Nabinagar) automatically.
 
-## 4. Standardized Forensic File Naming in ZIP
-- Full Books: \`[District]_[Upazila]_JL-[Mouza_JL]_[Mouza]_[Survey]_[KHATIAN_BOOK | DAG_BOOK]_[Style].pdf\`
-- Single Khatian: \`[District]_[Upazila]_JL-[Mouza_JL]_[Mouza]_[Survey]_Khatian-[No].pdf\``,
+## 4. Standardized Forensic File Naming
+- Full Books: \`[District]_[Upazila]_JL-[JL]_[Mouza]_[Survey]_[TYPE].pdf\`
+- Single Khatian: \`[District]_[Upazila]_JL-[JL]_[Mouza]_[Survey]_Khatian-[No].pdf\``,
   },
   {
     id: 'doc-02-appflow',
@@ -46,39 +46,15 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
     titleEn: '02. Application State Machine & User Flow',
     titleBn: '০২. অ্যাপ্লিকেশন স্টেট মেশিন ও ইউজার ফ্লো',
     summary:
-      'Details the 6-stage state machine including All Mouza Selection (সকল মৌজা নির্বাচন — e.g. all 176 Mouzas in Nabinagar) upon Upazila selection and sequential queue execution.',
-    markdown: `# 02_AppFlow.md — Application State Machine & User Flow (README.md Equivalent)
-
+      'Details the 6-stage state machine including automated All Mouza Selection upon Upazila selection.',
+    markdown: `# 02_AppFlow.md — Application State Machine & User Flow
 ## Cascading Filter & Mode State Machine
-1. **\`IDLE / GEO_INIT\`**: Load Division & District hierarchy (\`Chattogram\` → \`Brahmanbaria\`, \`Cumilla\`).
+1. **\`IDLE / GEO_INIT\`**: Load Division & District hierarchy via Live Discovery.
 2. **\`DISTRICT_SELECTED\`**: Unlock Upazila list; reset downstream selections.
-3. **\`UPAZILA_SELECTED\`**: **All Mouza Selection (সকল মৌজা নির্বাচন)** — counts, fetches, and selects all Mouzas within the selected Upazila (e.g., all **176 Mouzas** in Nabinagar Upazila) by default and generates the download queue (with quick toggle for \`All Mouzas\` / \`None\` / \`20-No Kaitala South Union Filter\` / Search by JL No. or Bengali/English name).
-4. **\`DOC_MODE_AND_SURVEY_CONFIGURED\`**:
-   - Select Document Mode: \`Full Mouza Khatian Book PDF\`, \`Full Mouza Dag Book PDF\`, \`Survey Khatian Batch\`, \`Namjari Khatian Batch\`, or \`Mouza Map\`.
-   - Select Survey Types: \`CS\`, \`SA\`, \`RS\`, \`BS/BRS\`, \`Mutation\`.
-   - For Khatian Books, select Book Format (\`নতুন/পুরনো\`, \`রঙিন/সাদা-কালো\`).
-5. **\`QUEUE_ACTIVE\`**: Sequential state machine (\`QUEUED\` → \`FETCHING_EPORCHA_TECH\` → \`MAGIC_BYTE_VERIFIED\` → \`CACHED_INDEXEDDB\` | \`CORS_BRIDGE_REQUIRED\`).
-6. **\`ARCHIVE_READY\`**: Bundle all verified PDFs + \`MANIFEST_AUDIT.csv\` and \`MANIFEST_AUDIT.md\` into a single downloadable \`.zip\` archive.`,
-  },
-  {
-    id: 'doc-03-uispec',
-    fileName: '/docs/03_UI_Spec.md',
-    equivalentName: 'UI_SPEC.md',
-    titleEn: '03. Material Design 3 Mobile-First UI Spec',
-    titleBn: '০৩. ম্যাটেরিয়াল ডিজাইন ৩ ইউজার ইন্টারফেস স্পেসিফিকেশন',
-    summary:
-      'Dark Slate & Emerald/Gold high-contrast specification optimized for Oppo A5 Pro (ColorOS 16 / Android 16) and 1440px desktop viewports.',
-    markdown: `# 03_UI_Spec.md — Material Design 3 Mobile-First UI Specification
-
-## 1. Design System
-- **Palette:** Material Design 3 (MD3) Dark Slate & Emerald/Gold high-contrast palette optimized for **Oppo A5 Pro (ColorOS 16 / Android 16)** and desktop browsers.
-- **Bilingual Typography:** Clean Bengali (\`Hind Siliguri\`) and English (\`Plus Jakarta Sans\` + \`JetBrains Mono\` with \`tabular-nums\`).
-
-## 2. Core Components
-- **Top App Bar:** Shows brand wordmark, single-line workspace navigation, and Android APK installer modal trigger.
-- **5-Mode Selector Cards:** Quick-switch buttons for *Survey Khatian*, *Namjari Khatian*, *Mouza Khatian Book (পূর্ণ মৌজা খতিয়ান বই)*, *Mouza Dag Book (পূর্ণ মৌজা দাগ বই)*, and *Mouza Map*.
-- **Cascading Geo Filter & All Mouza Selection Grid (সকল মৌজা নির্বাচন):** Counts, fetches, and selects all Mouzas within an Upazila (e.g., all 176 Mouzas in Nabinagar) as soon as the Upazila is chosen.
-- **Live Queue Console:** Displays real HTTP status codes, file size in KB/MB, \`%PDF-\` verification badge, and one-click direct open on \`https://eporcha.tech/...\`.`,
+3. **\`UPAZILA_SELECTED\`**: **All Mouza Selection** — counts, fetches, and selects all verified Mouzas within the selected Upazila automatically.
+4. **\`DOC_MODE_CONFIGURED\`**: Select Document Modes and Survey Types.
+5. **\`QUEUE_ACTIVE\`**: Sequential polite queue execution with 450ms–900ms jitter.
+6. **\`ARCHIVE_READY\`**: Bundle all verified PDFs + forensic manifest into a single structured ZIP.`,
   },
   {
     id: 'doc-04-trd',
@@ -87,61 +63,38 @@ Full cascading support for **Chittagong Division**, prioritizing **Brahmanbaria 
     titleEn: '04. Technical Requirements & Data Contracts',
     titleBn: '০৪. টেকনিক্যাল রিকোয়ারমেন্টস ও ডাটা কন্ট্রাক্টস',
     summary:
-      'Dual-transport fetcher (CapacitorHttp + Express/Termux/Cloudflare proxy), %PDF- binary magic-byte gate, and polite 450–900ms queue engine.',
-    markdown: `# 04_TRD.md — Technical Requirements & Data Contracts (API_SPEC.md Equivalent)
+      'Dual-transport fetcher, %PDF- binary magic-byte gate, and polite queue engine.',
+    markdown: `# 04_TRD.md — Technical Requirements & Data Contracts
+## 1. Dual-Transport Fetcher
+- **Android APK:** Uses \`CapacitorHttp\` to bypass CORS natively.
+- **Web Browser:** Routes through Express Server Relay (\`/api/eporcha-proxy\`).
 
-## 1. Dual-Transport Fetcher (\`src/services/eporchaTechClient.ts\`)
-- **On Android APK (Capacitor Runtime):** Uses \`CapacitorHttp.request()\` from \`@capacitor/core\` (enabled in \`capacitor.config.json\` with \`"CapacitorHttp": { "enabled": true }\`) to bypass browser CORS natively on the user's phone.
-- **On Web Browser:** Routes requests through the built-in Express Server Relay (\`/api/eporcha-proxy\`), a local Termux Proxy (\`http://127.0.0.1:8787/proxy?url=\`), or a user-defined Cloudflare Worker URL.
+## 2. Binary Verification Gate
+- Inspects \`ArrayBuffer\` first 5 bytes: must start with \`25 50 44 46 2D\` (\`%PDF-\`).
+- Minimum byte gate: \`> 1024 bytes\`.
 
-## 2. Binary Magic-Byte & Payload Verification Gate (\`src/services/binaryValidator.ts\`)
-- Inspects \`ArrayBuffer\` first 5 bytes: a valid PDF MUST start with hex \`25 50 44 46 2D\` (\`%PDF-\`) and have \`byteLength > 1024\`.
-- Parses HTML/JSON Khatian & Dag tables from \`eporcha.tech\` responses into structured \`KhatianRecord\` rows.
+## 3. Polite Queue Engine
+- Concurrency: 1-3 parallel requests.
+- Delay: 450ms–900ms polite jitter.
+- Persistence: \`IndexedDB\` (\`lr_eporcha_blobs_v2\`).
 
-## 3. Polite Anti-Crash Sequential Queue (\`src/services/queueEngine.ts\`)
-- Concurrency limited to \`1–3\` parallel requests with \`450ms–900ms\` polite delay jitter.
-- Streams verified PDF blobs directly to \`IndexedDB\` (\`lr_eporcha_blobs_v2\`).
-
-## 4. Official GitHub Release Coordinates (\`src/config/repoConfig.ts\`)
-- **Repository:** \`tapos-linx/LR_Mass_Downloader\`
-- **Android Package ID:** \`bd.landarchive.lrgetbdpro\` (\`LRgetBD Pro\`)
-- **Standard Release APK:** \`LRgetBD-Pro.apk\` (\`https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk\`)
-- **Releases API:** \`https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest\``,
-  },
-  {
-    id: 'doc-05-schema',
-    fileName: '/docs/05_Schema.md',
-    equivalentName: 'MEMORY.md',
-    titleEn: '05. Geographic Hierarchy & Storage Schema',
-    titleBn: '০৫. ভৌগোলিক হায়ারার্কি ও স্টোরেজ স্কিমা',
-    summary:
-      'Brahmanbaria (all 9 Upazilas, Nabinagar with all 176 Mouzas, 20-No Kaitala South Union: Goalai JL-114, Kaitala JL-115) & Cumilla hierarchy plus IndexedDB stores.',
-    markdown: `# 05_Schema.md — Geographic Hierarchy & Storage Schema (MEMORY.md Equivalent)
-
-## 1. Authoritative Geographic Dataset (\`src/data/geoHierarchy.ts\`)
-- **Brahmanbaria District (Code 12):**
-  - **Nabinagar Upazila (Thana):** **176 Mouzas** pre-indexed across all 21 Unions & Nabinagar Pourashava, highlighting **20-No Kaitala South Union (২০নং কাইতলা দক্ষিণ ইউনিয়ন)** — \`Goalai / গোয়ালী (JL-114)\`, \`Kaitala / কাইতলা (JL-115)\`, \`Noagaon / নোয়াগাঁও (JL-116)\`, \`Ramnagar / রামনগর (JL-117)\`, plus Barail, Birgaon, Krishnanagar, Natghar, Bidyakut, Nabinagar East, Nabinagar West, Kaitala North, Bitghar, Shibpur, Jinodpur, Laur Fatehpur, Ibrahimpur, Rasullabad, Satmora, Shampur, Barikandi, Salimganj, Ratanpur, Sreerampur, Mehari, Balia, and Majhigachha Unions.
-  - All 9 Upazilas: Nabinagar (176 Mouzas), Brahmanbaria Sadar, Kasba, Ashuganj, Sarail, Nasirnagar, Akhaura, Bancharampur, Bijoynagar.
-- **Cumilla District (Code 19):** Muradnagar, Debidwar, Brahmanpara.
-
-## 2. Persistence Schema (\`IndexedDB\` & \`localStorage\`)
-- \`lr_eporcha_queue_v2\`: Active/paused download queue tasks in \`localStorage\`.
-- \`lr_eporcha_blobs_v2\`: Verified \`%PDF-\` binary \`ArrayBuffer\` records in \`IndexedDB\`.
-- \`lr_eporcha_records_v2\`: Extracted Khatian/Dag tabular index searchable offline inside the app.`,
+## 4. Official GitHub Coordinates
+- **Repository:** \`tapos-linx/LRgetBD-Pro\`
+- **Android Package ID:** \`bd.landarchive.lrgetbdpro\`
+- **Release APK:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)`,
   },
   {
     id: 'doc-06-plan',
     fileName: '/docs/06_Plan.md',
     equivalentName: 'ROADMAP.md',
-    titleEn: '06. 4-Phase Implementation & APK Pipeline Plan',
-    titleBn: '০৬. ৪-ধাপের ইমপ্লিমেন্টেশন ও APK পাইপলাইন প্ল্যান',
+    titleEn: '06. Implementation & APK Pipeline Plan',
+    titleBn: '০৬. ইমপ্লিমেন্টেশন ও APK পাইপলাইন প্ল্যান',
     summary:
-      'Roadmap covering docs, dual-transport client, %PDF- validator, IndexedDB queue engine, CapacitorHttp config, and GitHub Actions APK release workflow.',
-    markdown: `# 06_Plan.md — 4-Phase Implementation Plan (ROADMAP.md Equivalent)
-
-- **Phase 1:** Generate all 6 \`/docs/*.md\` files, strict TypeScript models (\`src/types/land.ts\`), and the Brahmanbaria/Cumilla dataset (\`src/data/geoHierarchy.ts\`).
-- **Phase 2:** Implement \`src/services/eporchaTechClient.ts\` (dual Capacitor Native HTTP + Web/Server Proxy transport for all 5 \`eporcha.tech\` endpoints) and \`src/services/binaryValidator.ts\` (\`%PDF-\` magic-byte verifier).
-- **Phase 3:** Build the Sequential Queue Engine, \`IndexedDB\` storage service, \`JSZip\` bundler, and Material Design 3 Bilingual UI.
-- **Phase 4:** Configure \`capacitor.config.json\` (\`bd.landarchive.lrgetbdpro\`, \`CapacitorHttp.enabled = true\`) and \`.github/workflows/build-apk.yml\` for automated GitHub Releases APK publishing (\`tapos-linx/LR_Mass_Downloader\` -> \`LRgetBD-Pro.apk\`).`,
+      'Roadmap covering live discovery, dual-transport client, and automated APK release workflow.',
+    markdown: `# 06_Plan.md — Implementation Plan
+- **Phase 1:** Strict TypeScript models and Architecture documentation.
+- **Phase 2:** Live Geographic Discovery Service and Firestore normalization.
+- **Phase 3:** Polite Queue Engine with binary verification and structured ZIP export.
+- **Phase 4:** Automated GitHub Actions APK release pipeline (\`tapos-linx/LRgetBD-Pro\`).`,
   },
 ];

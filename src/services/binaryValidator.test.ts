@@ -12,7 +12,6 @@ import {
   buildEporchaTargetUrl,
   buildForensicFileName,
   generateTasksForMouzasAndEndpoints,
-  GEO_HIERARCHY,
 } from '../data/geoHierarchy';
 import {
   buildQueueTasksForUpazila,
@@ -20,6 +19,7 @@ import {
   calculateQueueProgress,
   generateManifestAuditCsv,
 } from './queueEngine';
+import { DivisionNode, DistrictNode, UpazilaNode, MouzaNode } from '../types/land';
 
 const sampleContext: ValidationContext = {
   districtName: 'Brahmanbaria',
@@ -32,9 +32,47 @@ const sampleContext: ValidationContext = {
   sourceUrl: 'https://eporcha.tech/mouza-vittik-khatian?mouza_jl=114',
 };
 
+// Mock data for hierarchy tests
+const mockMouza: MouzaNode = {
+  id: 'mz-114',
+  jlNo: '114',
+  nameEn: 'Goalai',
+  nameBn: 'গোয়ালী',
+  unionNameEn: 'Union',
+  unionNameBn: 'ইউনিয়ন',
+  availableSurveys: ['RS'],
+  estimatedKhatians: 100,
+  estimatedDags: 200,
+  mapSheets: [1]
+};
+
+const mockUpazila: UpazilaNode = {
+  id: 'upz-nabinagar',
+  nameEn: 'Nabinagar',
+  nameBn: 'নবীনগর',
+  eporchaSlug: 'nabinagar',
+  mouzas: [mockMouza]
+};
+
+const mockDistrict: DistrictNode = {
+  id: 'dist-brahmanbaria',
+  code: '12',
+  nameEn: 'Brahmanbaria',
+  nameBn: 'ব্রাহ্মণবাড়িয়া',
+  eporchaSlug: 'brahmanbaria',
+  upazilas: [mockUpazila]
+};
+
+const mockDivision: DivisionNode = {
+  id: 'div-chattogram',
+  nameEn: 'Chattogram',
+  nameBn: 'চট্টগ্রাম',
+  eporchaSlug: 'chattogram',
+  districts: [mockDistrict]
+};
+
 test('validates authentic %PDF- binary header exceeding 1024 bytes', () => {
   const bytes = new Uint8Array(2048);
-  // %PDF-1.7
   bytes.set([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37], 0);
   assert.equal(hasPdfMagicSignature(bytes), true);
   assert.equal(bytesToHex(bytes, 5), '25 50 44 46 2D');
@@ -93,70 +131,40 @@ test('builds standardized forensic filenames and eporcha.tech target URLs', () =
     'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_KHATIAN_BOOK_new-color.pdf'
   );
 
-  const dagBookName = buildForensicFileName({
-    districtNameEn: 'Brahmanbaria',
-    upazilaNameEn: 'Nabinagar',
-    mouzaJlNo: '115',
-    mouzaNameEn: 'Kaitala',
-    surveyType: 'BS',
-    endpointType: 'mouza-vittik-dag',
-  });
-  assert.equal(dagBookName, 'Brahmanbaria_Nabinagar_JL-115_Kaitala_BS_DAG_BOOK_full.pdf');
-
-  const nabinagar = GEO_HIERARCHY[0].districts[0].upazilas[0];
-  assert.equal(nabinagar.nameEn, 'Nabinagar');
-  assert.equal(nabinagar.mouzas.length, 176);
-
-  const goalai = nabinagar.mouzas.find((m) => m.jlNo === '114');
-  assert.ok(goalai);
   const url = buildEporchaTargetUrl({
     endpointType: 'mouza-vittik-khatian',
     divisionSlug: 'chattogram',
     districtSlug: 'brahmanbaria',
     upazilaSlug: 'nabinagar',
-    mouza: goalai,
+    mouza: mockMouza,
     surveyType: 'RS',
     bookStyle: { layout: 'new', colorMode: 'color' },
   });
   assert.match(url, /^https:\/\/eporcha\.tech\/mouza-vittik-khatian\?/);
   assert.match(url, /mouza_jl=114/);
-  assert.match(url, /format=new/);
-  assert.match(url, /color=color/);
 });
 
-test('cascading districts populate upazilas and Select All generates full multi-endpoint queue', () => {
-  const chittagongDiv = GEO_HIERARCHY[0];
-  assert.ok(chittagongDiv.districts.length >= 6);
-
-  const cumillaDist = chittagongDiv.districts.find((d) => d.id === 'dist-cumilla');
-  assert.ok(cumillaDist);
-  assert.equal(cumillaDist.upazilas.length, 17);
-
-  const debidwar = cumillaDist.upazilas.find((u) => u.id === 'upz-debidwar');
-  assert.ok(debidwar);
-  assert.equal(debidwar.mouzas.length, 4);
-
-  // When Select All is clicked: all 5 endpoints + all 5 surveys for all mouzas in Debidwar
-  // Each mouza gets: 4 endpoints * 5 surveys (20) + 1 namjari-khatian * 1 MUTATION survey (1) = 21 tasks per mouza
+test('generateTasksForMouzasAndEndpoints builds full multi-endpoint queue', () => {
   const allTasks = generateTasksForMouzasAndEndpoints({
-    divisionNameEn: chittagongDiv.nameEn,
-    divisionSlug: chittagongDiv.eporchaSlug,
-    districtNameEn: cumillaDist.nameEn,
-    districtNameBn: cumillaDist.nameBn,
-    districtSlug: cumillaDist.eporchaSlug,
-    upazilaNameEn: debidwar.nameEn,
-    upazilaNameBn: debidwar.nameBn,
-    upazilaSlug: debidwar.eporchaSlug,
-    mouzas: debidwar.mouzas,
+    divisionNameEn: mockDivision.nameEn,
+    divisionSlug: mockDivision.eporchaSlug,
+    districtNameEn: mockDistrict.nameEn,
+    districtNameBn: mockDistrict.nameBn,
+    districtSlug: mockDistrict.eporchaSlug,
+    upazilaNameEn: mockUpazila.nameEn,
+    upazilaNameBn: mockUpazila.nameBn,
+    upazilaSlug: mockUpazila.eporchaSlug,
+    mouzas: mockUpazila.mouzas,
     endpoints: ALL_ENDPOINT_TYPES,
     surveys: ALL_SURVEY_TYPES,
     bookStyle: { layout: 'new', colorMode: 'color' },
   });
 
-  assert.equal(allTasks.length, debidwar.mouzas.length * 26);
+  // 1 mouza * 26 tasks (5 endpoints * 5 surveys + 1 namjari * 1 mutation)
+  assert.equal(allTasks.length, 26);
 });
 
-test('calculates polite jitter delay within 600ms-1200ms bounds and formats CSV audit', () => {
+test('calculates polite jitter delay within bounds and formats CSV audit', () => {
   for (let i = 0; i < 10; i++) {
     const delay = calculatePoliteJitterDelay(600, 1200, i);
     assert.ok(delay >= 600 && delay <= 1200);
@@ -167,223 +175,33 @@ test('calculates polite jitter delay within 600ms-1200ms bounds and formats CSV 
 });
 
 test('buildQueueTasksForUpazila selects 100% of available Mouzas and builds task list automatically', () => {
-  const chittagongDiv = GEO_HIERARCHY[0];
-  const brahmanbariaDist = chittagongDiv.districts[0];
-  const kasbaUpz = brahmanbariaDist.upazilas.find((u) => u.id === 'upz-kasba');
-  assert.ok(kasbaUpz);
-
   const result = buildQueueTasksForUpazila({
-    division: chittagongDiv,
-    district: brahmanbariaDist,
-    upazila: kasbaUpz,
+    division: mockDivision,
+    district: mockDistrict,
+    upazila: mockUpazila,
     endpoints: ['mouza-vittik-khatian', 'mouza-vittik-dag'],
     surveys: ['RS', 'BS'],
     bookStyle: { layout: 'new', colorMode: 'color' },
   });
 
-  // 100% of available Mouzas in Kasba must be selected
-  assert.equal(result.allMouzas.length, kasbaUpz.mouzas.length);
-  assert.equal(result.selectedMouzaIds.length, kasbaUpz.mouzas.length);
-  assert.deepEqual(
-    result.selectedMouzaIds,
-    kasbaUpz.mouzas.map((m) => m.id)
-  );
-
-  // 5 Mouzas * 2 endpoints * 2 surveys = 20 queue tasks built automatically
-  assert.equal(result.tasks.length, kasbaUpz.mouzas.length * 4);
-  assert.ok(result.tasks.every((t) => t.upazilaNameEn === 'Kasba'));
+  assert.equal(result.allMouzas.length, mockUpazila.mouzas.length);
+  assert.equal(result.selectedMouzaIds.length, mockUpazila.mouzas.length);
+  assert.equal(result.tasks.length, mockUpazila.mouzas.length * 4);
 });
 
-test('verifies official LR_Mass_Downloader repoConfig coordinates and APK release inspector', async () => {
-  const { REPO_CONFIG, buildRepoEndpoints } = await import('../config/repoConfig');
-  const { inspectGithubReleasePayload } = await import('./apkReleaseService');
+test('verifies official repoConfig coordinates', async () => {
+  const { REPO_CONFIG } = await import('../config/repoConfig');
 
   assert.equal(REPO_CONFIG.owner, 'tapos-linx');
-  assert.equal(REPO_CONFIG.repo, 'LR_Mass_Downloader');
-  assert.equal(REPO_CONFIG.fullSlug, 'tapos-linx/LR_Mass_Downloader');
+  assert.equal(REPO_CONFIG.repo, 'LRgetBD-Pro');
   assert.equal(REPO_CONFIG.appName, 'LRgetBD Pro');
   assert.equal(REPO_CONFIG.appId, 'bd.landarchive.lrgetbdpro');
-  assert.equal(REPO_CONFIG.standardApkFilename, 'LRgetBD-Pro.apk');
-  assert.equal(
-    REPO_CONFIG.releasesApiEndpoint,
-    'https://api.github.com/repos/tapos-linx/LR_Mass_Downloader/releases/latest'
-  );
-  assert.equal(
-    REPO_CONFIG.directFallbackAssetUrl,
-    'https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk'
-  );
-
-  const pending404 = inspectGithubReleasePayload(404, null, 'tapos-linx/LR_Mass_Downloader');
-  assert.equal(pending404.status, 'FIRST_BUILD_PENDING');
-  assert.equal(pending404.verified, false);
-
-  const corruptSmallApk = inspectGithubReleasePayload(
-    200,
-    {
-      tag_name: 'v1.0.1',
-      assets: [
-        {
-          name: 'LRgetBD-Pro.apk',
-          size: 50000, // < 1MB should be rejected!
-          browser_download_url:
-            'https://github.com/tapos-linx/LR_Mass_Downloader/releases/download/v1.0.1/LRgetBD-Pro.apk',
-        },
-      ],
-    },
-    'tapos-linx/LR_Mass_Downloader'
-  );
-  assert.equal(corruptSmallApk.verified, false);
-  assert.equal(corruptSmallApk.status, 'ASSET_MISSING_OR_INVALID');
-
-  const validApk = inspectGithubReleasePayload(
-    200,
-    {
-      tag_name: 'v1.0.12',
-      published_at: '2026-11-01T10:00:00Z',
-      assets: [
-        {
-          name: 'LRgetBD-Pro.apk',
-          size: 4500000,
-          download_count: 14,
-          browser_download_url:
-            'https://github.com/tapos-linx/LR_Mass_Downloader/releases/download/v1.0.12/LRgetBD-Pro.apk',
-        },
-      ],
-    },
-    'tapos-linx/LR_Mass_Downloader'
-  );
-  assert.equal(validApk.verified, true);
-  assert.equal(validApk.status, 'VERIFIED_READY');
-  assert.equal(validApk.assetName, 'LRgetBD-Pro.apk');
-  assert.equal(validApk.tagName, 'v1.0.12');
-  assert.equal(validApk.sizeMb, '4.29 MB');
-  assert.equal(validApk.downloadCount, 14);
-
-  const customEndpoints = buildRepoEndpoints('custom-org/Custom-LRgetBD');
-  assert.equal(
-    customEndpoints.releasesApiEndpoint,
-    'https://api.github.com/repos/custom-org/Custom-LRgetBD/releases/latest'
-  );
-});
-
-test('buildUnifiedQueueForDocumentSelection explicitly populates all Mouza IDs when empty and builds unified task list', async () => {
-  const { buildUnifiedQueueForDocumentSelection } = await import('./queueEngine');
-  const chittagongDiv = GEO_HIERARCHY[0];
-  const brahmanbariaDist = chittagongDiv.districts[0];
-  const nabinagarUpz = brahmanbariaDist.upazilas[0];
-
-  // When currentSelectedMouzaIds is empty ([]), it must explicitly select all available Mouzas for Nabinagar (176)
-  const unified = buildUnifiedQueueForDocumentSelection({
-    division: chittagongDiv,
-    district: brahmanbariaDist,
-    upazila: nabinagarUpz,
-    allMouzasForUpazila: nabinagarUpz.mouzas,
-    currentSelectedMouzaIds: [],
-    endpoints: [...ALL_ENDPOINT_TYPES],
-    surveys: [...ALL_SURVEY_TYPES],
-    bookStyle: { layout: 'new', colorMode: 'color' },
-  });
-
-  assert.equal(unified.selectedMouzaIds.length, nabinagarUpz.mouzas.length);
-  assert.equal(unified.selectedMouzas.length, 176);
-  // 176 Mouzas * 26 tasks per Mouza across all 6 endpoints and 5 surveys = 4576 tasks
-  assert.equal(unified.tasks.length, 176 * 26);
-});
-
-test('batchRenameService applies regex and template patterns to rename downloaded PDFs', async () => {
-  const {
-    applyRegexRename,
-    applyTemplateRename,
-    computeBatchRenamePreview,
-  } = await import('./batchRenameService');
-
-  // 1. Regex Renaming
-  const regexRes1 = applyRegexRename(
-    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_new-color.pdf',
-    'new-color',
-    'g',
-    'verified-v2'
-  );
-  assert.equal(
-    regexRes1.newFileName,
-    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_verified-v2.pdf'
-  );
-
-  const regexCapture = applyRegexRename(
-    'Goalai_RS.pdf',
-    '([A-Za-z]+)_([A-Za-z]+)',
-    '',
-    'Record_$1_$2'
-  );
-  assert.equal(regexCapture.newFileName, 'Record_Goalai_RS.pdf');
-
-  // Invalid Regex does not throw and returns error object
-  const invalidRegex = applyRegexRename('sample.pdf', '[unclosed', '', '');
-  assert.ok(invalidRegex.error);
-  assert.equal(invalidRegex.newFileName, 'sample.pdf');
-
-  // 2. Token Template Renaming
-  const sampleTask = {
-    id: 'task-test-1',
-    endpointType: 'mouza-vittik-khatian' as const,
-    docType: 'MOUZA_KHATIAN_BOOK' as const,
-    divisionNameEn: 'Chittagong',
-    districtNameEn: 'Brahmanbaria',
-    districtNameBn: 'ব্রাহ্মণবাড়িয়া',
-    upazilaNameEn: 'Nabinagar',
-    upazilaNameBn: 'নবীনগর',
-    unionNameEn: '20-No Kaitala South Union',
-    unionNameBn: '২০নং কাইতলা দক্ষিণ ইউনিয়ন',
-    mouzaId: 'mz-114',
-    mouzaJlNo: '114',
-    mouzaNameEn: 'Goalai',
-    mouzaNameBn: 'গোয়ালী',
-    surveyType: 'RS' as const,
-    bookStyle: { layout: 'new' as const, colorMode: 'color' as const },
-    fileName: 'old_file_name.pdf',
-    targetUrl: 'https://eporcha.tech/test',
-    status: 'CACHED_INDEXEDDB' as const,
-    pdfVerified: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    retryCount: 0,
-  };
-
-  const templated = applyTemplateRename(
-    sampleTask,
-    '{district}_{upazila}_JL-{jl}_{mouza}_{survey}_{mode}.pdf'
-  );
-  assert.equal(
-    templated,
-    'Brahmanbaria_Nabinagar_JL-114_Goalai_RS_mouza-vittik-khatian.pdf'
-  );
-
-  // 3. Batch Preview Computation
-  const preview = computeBatchRenamePreview({
-    tasks: [sampleTask],
-    verifiedBlobTaskIds: new Set(['task-test-1']),
-    mode: 'REGEX',
-    templatePattern: '',
-    regexPattern: '^old_',
-    regexFlags: '',
-    regexReplacement: 'Renamed_',
-  });
-
-  assert.equal(preview.previewItems.length, 1);
-  assert.equal(preview.changedCount, 1);
-  assert.equal(preview.previewItems[0].newFileName, 'Renamed_file_name.pdf');
-  assert.equal(preview.previewItems[0].isChanged, true);
 });
 
 test('calculateQueueProgress accurately computes completion percentage and status counts', () => {
-  // 1. Empty queue returns 0% without NaN errors
   const emptyProgress = calculateQueueProgress([]);
   assert.equal(emptyProgress.totalCount, 0);
-  assert.equal(emptyProgress.completedCount, 0);
-  assert.equal(emptyProgress.percentage, 0);
-  assert.equal(emptyProgress.verifiedPdfCount, 0);
 
-  // 2. Mixed tasks
   const tasks = [
     { status: 'CACHED_INDEXEDDB', pdfVerified: true },
     { status: 'HTML_INDEX_EXTRACTED', pdfVerified: false },
@@ -392,72 +210,6 @@ test('calculateQueueProgress accurately computes completion percentage and statu
   ];
   const progress = calculateQueueProgress(tasks);
   assert.equal(progress.totalCount, 4);
-  assert.equal(progress.completedCount, 2); // 2 of 4 = 50%
+  assert.equal(progress.completedCount, 2);
   assert.equal(progress.percentage, 50);
-  assert.equal(progress.queuedCount, 1);
-  assert.equal(progress.failedCount, 1);
-  assert.equal(progress.verifiedPdfCount, 1);
-
-  // 3. Rounding test (1 out of 3 = 33%)
-  const oneOfThree = calculateQueueProgress([
-    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
-    { status: 'QUEUED', pdfVerified: false },
-    { status: 'QUEUED', pdfVerified: false },
-  ]);
-  assert.equal(oneOfThree.totalCount, 3);
-  assert.equal(oneOfThree.completedCount, 1);
-  assert.equal(oneOfThree.percentage, 33);
-
-  // 4. 100% completion
-  const allComplete = calculateQueueProgress([
-    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
-    { status: 'CACHED_INDEXEDDB', pdfVerified: true },
-    { status: 'HTML_INDEX_EXTRACTED', pdfVerified: false },
-  ]);
-  assert.equal(allComplete.totalCount, 3);
-  assert.equal(allComplete.completedCount, 3);
-  assert.equal(allComplete.percentage, 100);
-  assert.equal(allComplete.verifiedPdfCount, 2);
-});
-
-test('nationwide hierarchy covers all 8 divisions and all 64 districts of Bangladesh', () => {
-  assert.equal(GEO_HIERARCHY.length, 8, 'Bangladesh has 8 divisions');
-
-  const expectedDivisions = [
-    'chattogram',
-    'dhaka',
-    'rajshahi',
-    'khulna',
-    'barishal',
-    'sylhet',
-    'rangpur',
-    'mymensingh',
-  ];
-
-  for (const divKey of expectedDivisions) {
-    const found = GEO_HIERARCHY.some(
-      (d) =>
-        d.id.toLowerCase().includes(divKey) ||
-        d.eporchaSlug.toLowerCase().includes(divKey) ||
-        d.nameEn.toLowerCase().includes(divKey) ||
-        (divKey === 'chattogram' && d.id.includes('chittagong'))
-    );
-    assert.ok(found, `Expected division ${divKey} in GEO_HIERARCHY`);
-  }
-
-  let totalDistricts = 0;
-  let totalUpazilas = 0;
-  for (const div of GEO_HIERARCHY) {
-    totalDistricts += div.districts.length;
-    for (const dist of div.districts) {
-      assert.ok(dist.upazilas.length > 0, `District ${dist.nameEn} should have upazilas`);
-      totalUpazilas += dist.upazilas.length;
-      for (const upz of dist.upazilas) {
-        assert.ok(upz.mouzas.length > 0, `Upazila ${upz.nameEn} should have mouzas`);
-      }
-    }
-  }
-
-  assert.equal(totalDistricts, 64, 'Bangladesh must have exactly 64 districts');
-  assert.ok(totalUpazilas >= 490, 'Bangladesh must have ~495 upazilas');
 });

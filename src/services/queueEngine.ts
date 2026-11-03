@@ -27,6 +27,18 @@ import {
   saveVerifiedPdfBlob,
 } from './storageService';
 
+/**
+ * Implements Phase 7 / Part 8 requirements: Seven-Mouza Download Batching.
+ * Splits a list of Mouzas into batches of exactly 7 (except the final batch).
+ */
+export function batchMouzasForQueue(mouzas: MouzaNode[], batchSize: number = 7): MouzaNode[][] {
+  const batches: MouzaNode[][] = [];
+  for (let i = 0; i < mouzas.length; i += batchSize) {
+    batches.push(mouzas.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
 export function buildQueueTasksForUpazila(params: {
   division: DivisionNode;
   district: DistrictNode;
