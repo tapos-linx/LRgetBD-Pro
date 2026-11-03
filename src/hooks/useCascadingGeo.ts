@@ -47,7 +47,7 @@ export interface UseCascadingGeoReturn {
   setSelectedMouzaIds: React.Dispatch<React.SetStateAction<string[]>>;
 
   // Fast Batch Controls
-  selectAll100Percent: () => void;
+  selectAllMouzas: () => void;
   deselectAll: () => void;
   invertSelection: () => void;
   toggleMouza: (mouzaId: string) => void;
@@ -113,7 +113,10 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     setSelectedDivisionId(divId);
     setSelectedDistrictId(null);
     setSelectedUpazilaId(null);
-    setDistricts([]);
+    
+    // Pre-populate from baseline if available
+    const div = divisions.find(d => d.id === divId);
+    setDistricts(div?.districts || []);
     setUpazilas([]);
     setMouzas([]);
     setSelectedMouzaIds([]);
@@ -126,17 +129,31 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       if (cached.length === 0) {
         cached = await geoDiscovery.discoverDistricts(divId);
       }
-      setDistricts(cached);
+      
+      if (cached.length > 0) {
+        setDistricts(prev => {
+          // Merge discovered with preloaded to avoid losing data
+          const existingIds = new Set(prev.map(p => p.id));
+          const next = [...prev];
+          cached.forEach(c => {
+            if (!existingIds.has(c.id)) next.push(c);
+          });
+          return next;
+        });
+      }
       setIsDiscovering(false);
-      setDiscoveryStatus(cached.length > 0 ? null : 'No districts found for this division.');
+      setDiscoveryStatus(null);
     }
-  }, []);
+  }, [divisions]);
 
   // 2. District Selection Handler
   const handleDistrictChange = useCallback(async (distId: string | null) => {
     setSelectedDistrictId(distId);
     setSelectedUpazilaId(null);
-    setUpazilas([]);
+    
+    // Pre-populate upazilas if they exist in the current districts state
+    const dist = districts.find(d => d.id === distId);
+    setUpazilas(dist?.upazilas || []);
     setMouzas([]);
     setSelectedMouzaIds([]);
     
@@ -147,11 +164,21 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       if (cached.length === 0) {
         cached = await geoDiscovery.discoverUpazilas(distId);
       }
-      setUpazilas(cached);
+      
+      if (cached.length > 0) {
+        setUpazilas(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          const next = [...prev];
+          cached.forEach(c => {
+            if (!existingIds.has(c.id)) next.push(c);
+          });
+          return next;
+        });
+      }
       setIsDiscovering(false);
-      setDiscoveryStatus(cached.length > 0 ? null : 'No upazilas found for this district.');
+      setDiscoveryStatus(null);
     }
-  }, []);
+  }, [districts]);
 
   // 3. Upazila Selection Handler (Phase 4 & 5)
   const handleUpazilaChange = useCallback(async (upzId: string | null) => {
@@ -202,9 +229,9 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     unionFilteredMouzas.length > 0 &&
     unionFilteredMouzas.every((m) => selectedMouzaIds.includes(m.id));
 
-  const selectAll100Percent = useCallback(() => {
-    setSelectedMouzaIds(unionFilteredMouzas.map((m) => m.id));
-  }, [unionFilteredMouzas]);
+  const selectAllMouzas = useCallback(() => {
+    setSelectedMouzaIds(allMouzasForUpazila.map((m) => m.id));
+  }, [allMouzasForUpazila]);
 
   const deselectAll = useCallback(() => {
     setSelectedMouzaIds([]);
@@ -270,7 +297,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     setMouzaSearch,
     setSelectedMouzaIds,
 
-    selectAll100Percent,
+    selectAllMouzas,
     deselectAll,
     invertSelection,
     toggleMouza,

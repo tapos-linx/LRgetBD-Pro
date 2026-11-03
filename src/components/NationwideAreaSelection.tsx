@@ -168,7 +168,7 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
                 Deselect All
               </button>
               <button
-                onClick={geo.selectAll100Percent}
+                onClick={geo.selectAllMouzas}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-[10px] text-emerald-400 font-bold hover:bg-emerald-600/30"
               >
                 Select All Mouzas

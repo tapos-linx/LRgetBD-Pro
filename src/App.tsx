@@ -223,7 +223,7 @@ export default function App() {
     
     setSelectedEndpoints(allEndpoints);
     setSelectedSurveys(allSurveys);
-    geo.selectAll100Percent();
+    geo.selectAllMouzas();
     setIsQueueRunning(true);
     setEnqueueFeedback(`Global selection: All Mouzas and all document modes queued.`);
   };
