@@ -1,4 +1,5 @@
-import { DivisionNode, MouzaNode, SurveyType } from '../types/land';
+import { DivisionNode, MouzaNode, SurveyType, UpazilaNode } from '../types/land';
+import bangladeshUpazilas from './bangladeshUpazilasData.json';
 
 const ALL_SURVEYS: SurveyType[] = ['CS', 'SA', 'RS', 'BS', 'MUTATION'];
 
@@ -357,6 +358,13 @@ function createUpazilaMouzas(
   }));
 }
 
+function toTitleCase(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
 function createDistrictWithUpazilas(
   id: string,
   code: string,
@@ -365,13 +373,37 @@ function createDistrictWithUpazilas(
   upazilaNames: Array<{ nameEn: string; nameBn: string }>
 ) {
   const distSlug = nameEn.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  return {
-    id,
-    code,
-    nameEn,
-    nameBn,
-    eporchaSlug: distSlug,
-    upazilas: upazilaNames.map((u) => {
+  const paddedCode = String(code).padStart(2, '0');
+  const jsonMatches = (bangladeshUpazilas as Array<{
+    NAME: string;
+    NAME_EN: string;
+    BBS_CODE: string;
+    DISTRICT_BBS_CODE: string;
+  }>).filter(
+    (u) => String(u.DISTRICT_BBS_CODE).padStart(2, '0') === paddedCode
+  );
+
+  let upazilas: UpazilaNode[];
+  if (jsonMatches.length > 0) {
+    const seenSlugs = new Set<string>();
+    upazilas = [];
+    for (const u of jsonMatches) {
+      const formattedEn = toTitleCase(u.NAME_EN);
+      const upzSlug = formattedEn.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const uniqueId = seenSlugs.has(upzSlug)
+        ? `upz-${upzSlug}-${u.BBS_CODE}`
+        : `upz-${upzSlug}`;
+      seenSlugs.add(upzSlug);
+      upazilas.push({
+        id: uniqueId,
+        nameEn: formattedEn,
+        nameBn: String(u.NAME).trim(),
+        eporchaSlug: upzSlug,
+        mouzas: [],
+      });
+    }
+  } else {
+    upazilas = upazilaNames.map((u) => {
       const upzSlug = u.nameEn.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       return {
         id: `upz-${upzSlug}`,
@@ -380,7 +412,16 @@ function createDistrictWithUpazilas(
         eporchaSlug: upzSlug,
         mouzas: [],
       };
-    }),
+    });
+  }
+
+  return {
+    id,
+    code,
+    nameEn,
+    nameBn,
+    eporchaSlug: distSlug,
+    upazilas,
   };
 }
 

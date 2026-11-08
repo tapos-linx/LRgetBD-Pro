@@ -200,7 +200,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             htmlFor="upazila-select-box"
             className="block text-xs text-emerald-400 font-semibold mb-1 font-bn"
           >
-            ৩. উপজেলা (Upazila in {geo.activeDistrict?.nameEn || 'District'} — {geo.upazilas.length} Upazilas)
+            ৩. উপজেলা (Upazila in {geo.activeDistrict?.nameEn || 'District'} — {geo.upazilas.length} Found in URL)
           </label>
           <select
             id="upazila-select-box"

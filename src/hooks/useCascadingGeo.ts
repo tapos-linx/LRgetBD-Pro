@@ -172,7 +172,12 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
 
   // 1. Upazila Selection Handler — Fetches ALL Mouzas from eporcha.tech URL, shows the count, and auto-selects 100% of discovered Mouzas
   const handleUpazilaChange = useCallback(
-    async (upzId: string | null) => {
+    async (
+      upzId: string | null,
+      overrideDistrictId?: string | null,
+      upazilaCountFromUrl?: number,
+      overrideUpazilaList?: UpazilaNode[]
+    ) => {
       setSelectedUpazilaIdState(upzId);
       setSelectedUnion('ALL');
       setMouzaSearch('');
@@ -184,9 +189,13 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         return;
       }
 
+      const effectiveDistrictId =
+        overrideDistrictId !== undefined ? overrideDistrictId : selectedDistrictId;
+      const candidateUpazilas = overrideUpazilaList || upazilas;
+
       // Check if authoritative in-memory record has mouzas (e.g., Nabinagar 176 verified Mouzas)
       let authUpz: UpazilaNode | null =
-        upazilas.find((u) => u.id === upzId) || null;
+        candidateUpazilas.find((u) => u.id === upzId) || null;
       if (!authUpz) {
         for (const div of divisions) {
           for (const dist of div.districts) {
@@ -201,6 +210,10 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       }
 
       const upzName = authUpz?.nameEn || upzId.replace(/^upz-/, '');
+      const upzPrefix =
+        upazilaCountFromUrl !== undefined
+          ? `Found ${upazilaCountFromUrl} Upazilas in URL · `
+          : '';
 
       if (authUpz && authUpz.mouzas.length > 0) {
         const { fullMouzaList, allMouzaIds } = buildFullMouzaSelection(
@@ -210,19 +223,21 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setMouzas(fullMouzaList);
         setSelectedMouzaIds(allMouzaIds);
         setDiscoveryStatus(
-          `Found ${fullMouzaList.length} Mouzas for ${upzName} (Authoritative Record). Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
+          `${upzPrefix}Found ${fullMouzaList.length} Mouzas for ${upzName} (Authoritative Record). Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
         );
         setIsDiscovering(false);
         return;
       }
 
       setIsDiscovering(true);
-      setDiscoveryStatus(`Querying eporcha.tech URL for Mouzas in ${upzName}...`);
+      setDiscoveryStatus(
+        `${upzPrefix}Querying eporcha.tech URL for Mouzas in ${upzName}...`
+      );
 
       try {
         const summary = await geoDiscovery.queryMouzasFromPortalUrl(
           upzId,
-          selectedDistrictId
+          effectiveDistrictId
         );
         const { fullMouzaList, allMouzaIds } = buildFullMouzaSelection(
           summary.mouzas,
@@ -235,11 +250,11 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
 
         if (summary.totalFound > 0) {
           setDiscoveryStatus(
-            `Found ${summary.totalFound} Mouzas for ${summary.upazilaNameEn || upzName} from eporcha.tech URL. Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
+            `${upzPrefix}Found ${summary.totalFound} Mouzas for ${summary.upazilaNameEn || upzName} from eporcha.tech URL. Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
           );
         } else {
           setDiscoveryStatus(
-            `No Mouza records found for ${upzName} from URL.`
+            `${upzPrefix}No Mouza records found for ${upzName} from URL.`
           );
         }
       } catch (err) {
@@ -252,7 +267,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
     [upazilas, divisions, selectedDistrictId, buildFullMouzaSelection]
   );
 
-  // 2. District Selection Handler — Cascades and fetches all Mouzas for first Upazila
+  // 2. District Selection Handler — First fetches ALL Upazilas for the District from URL, populates the cascading menu, then fetches Mouzas for the first Upazila
   const handleDistrictChange = useCallback(
     async (distId: string | null) => {
       setSelectedDistrictIdState(distId);
@@ -264,12 +279,13 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setUpazilas([]);
         setMouzas([]);
         setSelectedMouzaIds([]);
+        setDiscoveryStatus(null);
         return;
       }
 
       let authDist: DistrictNode | null =
         districts.find((d) => d.id === distId) || null;
-      if (!authDist || authDist.upazilas.length === 0) {
+      if (!authDist) {
         for (const div of divisions) {
           const match = div.districts.find((d) => d.id === distId);
           if (match) {
@@ -279,33 +295,45 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         }
       }
 
-      if (authDist && authDist.upazilas.length > 0) {
-        const nextUpazilas = [...authDist.upazilas];
-        const firstUpz = nextUpazilas[0] || null;
-        setUpazilas(nextUpazilas);
-        setSelectedUpazilaIdState(firstUpz?.id || null);
-
-        if (firstUpz) {
-          await handleUpazilaChange(firstUpz.id);
-          return;
-        }
-      }
+      const distName = authDist?.nameEn || distId.replace(/^dist-/, '');
 
       setIsDiscovering(true);
-      setDiscoveryStatus('Fetching upazilas from portal...');
-      const discoveredUpazilas = await geoDiscovery.discoverUpazilas(distId);
-      setUpazilas(discoveredUpazilas);
-      setIsDiscovering(false);
-      if (discoveredUpazilas.length > 0) {
-        await handleUpazilaChange(discoveredUpazilas[0].id);
-      } else {
-        setDiscoveryStatus('No upazilas found for this district.');
+      setDiscoveryStatus(
+        `Querying eporcha.tech URL for all Upazilas in ${distName} District...`
+      );
+
+      try {
+        const upzSummary = await geoDiscovery.queryUpazilasFromPortalUrl(distId);
+        const discoveredUpazilas = upzSummary.upazilas;
+
+        setUpazilas(discoveredUpazilas);
+
+        if (discoveredUpazilas.length > 0) {
+          const firstUpz = discoveredUpazilas[0];
+          setSelectedUpazilaIdState(firstUpz.id);
+          await handleUpazilaChange(
+            firstUpz.id,
+            distId,
+            upzSummary.totalFound,
+            discoveredUpazilas
+          );
+        } else {
+          setSelectedUpazilaIdState(null);
+          setMouzas([]);
+          setSelectedMouzaIds([]);
+          setDiscoveryStatus(`No upazilas found for ${distName} District in URL.`);
+          setIsDiscovering(false);
+        }
+      } catch (err) {
+        console.error('Upazila URL Discovery Failed:', err);
+        setDiscoveryStatus(`Failed to fetch Upazilas for ${distName} from URL.`);
+        setIsDiscovering(false);
       }
     },
     [districts, divisions, handleUpazilaChange]
   );
 
-  // 3. Division Selection Handler — Cascades down to first District and first Upazila
+  // 3. Division Selection Handler — Cascades down to first District and triggers District -> Upazila -> Mouza URL discovery
   const handleDivisionChange = useCallback(
     async (divId: string | null) => {
       setSelectedDivisionIdState(divId);
@@ -319,6 +347,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setUpazilas([]);
         setMouzas([]);
         setSelectedMouzaIds([]);
+        setDiscoveryStatus(null);
         return;
       }
 
@@ -326,22 +355,15 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       if (authDiv && authDiv.districts.length > 0) {
         const nextDistricts = [...authDiv.districts];
         const firstDist = nextDistricts[0];
-        const nextUpazilas = firstDist ? [...firstDist.upazilas] : [];
-        const firstUpz = nextUpazilas[0] || null;
-
         setDistricts(nextDistricts);
-        setSelectedDistrictIdState(firstDist?.id || null);
-        setUpazilas(nextUpazilas);
-        setSelectedUpazilaIdState(firstUpz?.id || null);
-
-        if (firstUpz) {
-          await handleUpazilaChange(firstUpz.id);
+        if (firstDist) {
+          await handleDistrictChange(firstDist.id);
           return;
         }
       }
 
       setIsDiscovering(true);
-      setDiscoveryStatus('Fetching districts...');
+      setDiscoveryStatus('Fetching districts from portal...');
       const discoveredDistricts = await geoDiscovery.discoverDistricts(divId);
       setDistricts(discoveredDistricts);
       setIsDiscovering(false);
@@ -351,7 +373,7 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setDiscoveryStatus('No districts found for this division.');
       }
     },
-    [divisions, handleUpazilaChange, handleDistrictChange]
+    [divisions, handleDistrictChange]
   );
 
   const retryDiscovery = useCallback(() => {

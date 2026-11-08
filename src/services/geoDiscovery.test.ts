@@ -375,6 +375,34 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
     expect(summary.mouzas[0].jlNo).toBe('1');
     expect(summary.mouzas[149].jlNo).toBe('150');
   });
+
+  it('Scenario 12: Should query eporcha.tech URL for District Upazilas, report total found Upazilas, and return all of them for the cascading menu', async () => {
+    const mockCumillaUpazilas = {
+      success: true,
+      status_code: 200,
+      message: 'Fetch Successfully',
+      data: Array.from({ length: 17 }, (_, i) => ({
+        ID: 120000 + i,
+        NAME: `উপজেলা ${i + 1}`,
+        NAME_EN: `UPAZILA ${i + 1}`,
+        BBS_CODE: String(i + 1).padStart(2, '0'),
+        DISTRICT_BBS_CODE: '19',
+      })),
+    };
+
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(mockCumillaUpazilas),
+    });
+
+    const summary = await geoDiscovery.queryUpazilasFromPortalUrl('dist-cumilla');
+
+    expect(summary.totalFound).toBe(17);
+    expect(summary.upazilas).toHaveLength(17);
+    expect(summary.portalUrl).toContain('DISTRICT_BBS_CODE=19');
+    expect(summary.upazilas[0].nameEn).toBe('Upazila 1');
+    expect(summary.upazilas[16].nameEn).toBe('Upazila 17');
+  });
 });
 
 

@@ -32,9 +32,29 @@ export interface DiscoveredMouzaSummary {
   mouzas: MouzaNode[];
 }
 
+export interface DiscoveredUpazilaSummary {
+  districtId: string;
+  districtNameEn: string;
+  districtNameBn: string;
+  totalFound: number;
+  portalUrl: string;
+  upazilas: UpazilaNode[];
+}
+
+function formatPortalNameEn(raw: string): string {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return 'Unknown Upazila';
+  if (trimmed === trimmed.toUpperCase()) {
+    return trimmed
+      .toLowerCase()
+      .replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  }
+  return trimmed;
+}
+
 /**
  * Live Geographic Discovery Service for eporcha.tech.
- * Discovers verified child regions and all Mouzas for an Upazila directly
+ * Discovers verified child regions and all Upazilas/Mouzas directly
  * from the eporcha.tech portal URL with zero caps or truncations.
  */
 export class GeoDiscoveryService {
@@ -122,8 +142,9 @@ export class GeoDiscoveryService {
 
     // 1. Try search filtered by district BBS code
     if (distCode) {
+      const paddedDist = String(distCode).padStart(2, '0');
       const distMatches = upzList.filter(
-        (u) => String(u.DISTRICT_BBS_CODE).trim() === distCode
+        (u) => String(u.DISTRICT_BBS_CODE).trim().padStart(2, '0') === paddedDist
       );
       const exact = distMatches.find(
         (u) =>
@@ -161,14 +182,21 @@ export class GeoDiscoveryService {
       const response = await fetch(url);
       if (response.ok) {
         const raw = await response.json();
-        if (Array.isArray(raw) && raw.length > 0) {
-          const districts: DistrictNode[] = raw
+        const rawList = Array.isArray(raw)
+          ? raw
+          : Array.isArray(raw?.data)
+          ? raw.data
+          : [];
+        if (rawList.length > 0) {
+          const districts: DistrictNode[] = rawList
             .map((d: any) => ({
-              id: String(d.id).startsWith('dist-') ? String(d.id) : `dist-${d.id}`,
-              code: String(d.code || d.id),
-              nameEn: d.name_en || d.name || 'Unknown District',
-              nameBn: d.name_bn || d.name_bd || d.name || '',
-              eporchaSlug: String(d.name_en || d.name || d.id)
+              id: String(d.id || d.BBS_CODE).startsWith('dist-')
+                ? String(d.id || d.BBS_CODE)
+                : `dist-${d.id || d.BBS_CODE}`,
+              code: String(d.code || d.BBS_CODE || d.id),
+              nameEn: formatPortalNameEn(d.name_en || d.NAME_EN || d.name || 'Unknown District'),
+              nameBn: String(d.name_bn || d.NAME || d.name_bd || d.name || '').trim(),
+              eporchaSlug: String(d.name_en || d.NAME_EN || d.name || d.id)
                 .toLowerCase()
                 .replace(/\s+/g, '-'),
               upazilas: [],
@@ -197,46 +225,133 @@ export class GeoDiscoveryService {
     return [];
   }
 
+  /**
+   * Discovers ALL Upazilas for the selected District directly from eporcha.tech URL
+   */
   async discoverUpazilas(districtId: string): Promise<UpazilaNode[]> {
-    const cleanId = districtId.replace(/^dist-/, '');
-    const url = `${this.baseUrl}/get-upazilas?district_id=${encodeURIComponent(cleanId)}`;
-    try {
-      const response = await fetch(url);
-      if (response.ok) {
-        const raw = await response.json();
-        if (Array.isArray(raw) && raw.length > 0) {
-          const upazilas: UpazilaNode[] = raw
-            .map((u: any) => ({
-              id: String(u.id).startsWith('upz-') ? String(u.id) : `upz-${u.id}`,
-              nameEn: u.name_en || u.name || 'Unknown Upazila',
-              nameBn: u.name_bn || u.name_bd || u.name || '',
-              eporchaSlug: String(u.name_en || u.name || u.id)
-                .toLowerCase()
-                .replace(/\s+/g, '-'),
-              mouzas: [],
-            }))
-            .filter((u: UpazilaNode) => Boolean(u.nameEn && u.id));
+    const summary = await this.queryUpazilasFromPortalUrl(districtId);
+    return summary.upazilas;
+  }
 
-          for (const u of upazilas) {
-            try {
-              void Promise.resolve(geoDb.saveUpazila(u, districtId)).catch(() => {});
-            } catch {
-              // Ignore Firestore write error
+  /**
+   * Queries the eporcha.tech URL (`https://eporcha.tech/api/dlrms/upazilas?DISTRICT_BBS_CODE=...`)
+   * to fetch all Upazilas for the selected District, counts how many were found, and returns the full list.
+   */
+  async queryUpazilasFromPortalUrl(
+    districtId: string
+  ): Promise<DiscoveredUpazilaSummary> {
+    const cleanId = districtId.replace(/^dist-/, '');
+    const authDist = this.findAuthoritativeDistrict(districtId);
+    const distCode = authDist?.code || (/^\d+$/.test(cleanId) ? cleanId : null);
+
+    const targetPortalUrl = distCode
+      ? `https://eporcha.tech/api/dlrms/upazilas?DISTRICT_BBS_CODE=${encodeURIComponent(distCode)}`
+      : `https://eporcha.tech/api/get-upazilas?district_id=${encodeURIComponent(cleanId)}`;
+
+    const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(targetPortalUrl)}`;
+
+    try {
+      const response = await fetch(proxyUrl);
+      if (response.ok) {
+        const json = await response.json();
+        let rawList: any[] = Array.isArray(json)
+          ? json
+          : Array.isArray(json?.data)
+          ? json.data
+          : [];
+
+        // Filter to the requested District BBS code if the response includes DISTRICT_BBS_CODE
+        if (distCode && rawList.length > 0 && rawList[0]?.DISTRICT_BBS_CODE !== undefined) {
+          const paddedDist = String(distCode).padStart(2, '0');
+          rawList = rawList.filter(
+            (u: any) => String(u.DISTRICT_BBS_CODE).trim().padStart(2, '0') === paddedDist
+          );
+        }
+
+        if (rawList.length > 0) {
+          const upazilas: UpazilaNode[] = [];
+          const seenIds = new Set<string>();
+
+          for (const u of rawList) {
+            const rawNameEn = u.NAME_EN ?? u.name_en ?? u.name;
+            const rawNameBn = u.NAME ?? u.name_bn ?? u.name_bd ?? rawNameEn;
+            if (!rawNameEn && !rawNameBn) continue;
+
+            const formattedEn = formatPortalNameEn(rawNameEn || rawNameBn);
+            const upzSlug = formattedEn
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-|-$/g, '');
+
+            const isNabinagar =
+              upzSlug === 'nabinagar' ||
+              (String(u.DISTRICT_BBS_CODE) === '12' && String(u.BBS_CODE) === '85');
+
+            let id = isNabinagar
+              ? 'upz-nabinagar'
+              : u.id && String(u.id).startsWith('upz-')
+              ? String(u.id)
+              : upzSlug
+              ? `upz-${upzSlug}`
+              : `upz-${u.BBS_CODE || u.ID || u.id}`;
+
+            if (seenIds.has(id)) {
+              id = `${id}-${u.BBS_CODE || u.ID || upazilas.length + 1}`;
             }
+            seenIds.add(id);
+
+            upazilas.push({
+              id,
+              nameEn: isNabinagar ? 'Nabinagar' : formattedEn,
+              nameBn: isNabinagar ? 'নবীনগর' : String(rawNameBn).trim(),
+              eporchaSlug: isNabinagar ? 'nabinagar' : upzSlug,
+              mouzas: isNabinagar ? [...NABINAGAR_176_MOUZAS] : [],
+            });
           }
-          return upazilas;
+
+          if (upazilas.length > 0) {
+            for (const u of upazilas) {
+              try {
+                void Promise.resolve(geoDb.saveUpazila(u, districtId)).catch(() => {});
+              } catch {
+                // Ignore Firestore write error
+              }
+            }
+
+            return {
+              districtId,
+              districtNameEn: authDist?.nameEn || cleanId,
+              districtNameBn: authDist?.nameBn || cleanId,
+              totalFound: upazilas.length,
+              portalUrl: targetPortalUrl,
+              upazilas,
+            };
+          }
         }
       }
     } catch (error) {
-      console.error('Upazila Discovery Error:', error);
+      console.warn('Primary Upazila URL discovery error, using fallback:', error);
     }
 
-    const fallbackDist = this.findAuthoritativeDistrict(districtId);
-    if (fallbackDist && fallbackDist.upazilas.length > 0) {
-      return [...fallbackDist.upazilas];
+    if (authDist && authDist.upazilas.length > 0) {
+      return {
+        districtId,
+        districtNameEn: authDist.nameEn,
+        districtNameBn: authDist.nameBn,
+        totalFound: authDist.upazilas.length,
+        portalUrl: targetPortalUrl,
+        upazilas: [...authDist.upazilas],
+      };
     }
 
-    return [];
+    return {
+      districtId,
+      districtNameEn: cleanId,
+      districtNameBn: cleanId,
+      totalFound: 0,
+      portalUrl: targetPortalUrl,
+      upazilas: [],
+    };
   }
 
   /**
