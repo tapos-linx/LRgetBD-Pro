@@ -22,11 +22,15 @@ import type { User } from 'firebase/auth';
 import { initAuth } from './services/firebaseClient';
 import {
   BookStyleConfig,
+  ConcurrencyTunerTelemetry,
   EporchaEndpointType,
   KhatianRecord,
   MouzaNode,
   ProxyConfig,
   QueueTask,
+  SmartPauseConfig,
+  SmartPauseMonitorState,
+  SmartSchedulerConfig,
   SurveyType,
 } from './types/land';
 import {
@@ -44,18 +48,29 @@ import {
   clearAllVerifiedPdfBlobs,
   clearExtractedKhatianRecords,
   getAllExtractedKhatianRecords,
-  getAllVerifiedPdfBlobs,
+  getAllVerifiedBlobTaskIds,
   loadPersistedQueue,
   loadProxyConfig,
+  loadSchedulerConfig,
+  loadSmartPauseConfig,
   saveExtractedKhatianRecords,
   savePersistedQueue,
   saveProxyConfig,
+  saveSchedulerConfig,
+  saveSmartPauseConfig,
   batchUpdateVerifiedBlobFileNames,
 } from './services/storageService';
 import {
+  applyTaskRetryBudgetPolicy,
   calculatePoliteJitterDelay,
   calculateQueueProgress,
+  createInitialConcurrencyTelemetry,
+  createInitialSmartPauseState,
+  evaluateAutoConcurrencyStep,
+  evaluateSmartPauseStep,
+  evaluateWorkWindowStatus,
   generateManifestAuditCsv,
+  getRegimeForConcurrency,
   moveQueueTaskByOffset,
   prioritizeMouzaInQueue,
   processSingleQueueTask,
@@ -80,6 +95,7 @@ import { TabularIndexView } from './components/TabularIndexView';
 import { ArchitectureDocsView } from './components/ArchitectureDocsView';
 import { useCascadingGeo } from './hooks/useCascadingGeo';
 import { NationwideAreaSelection } from './components/NationwideAreaSelection';
+import { SmartBatchScheduler } from './components/SmartBatchScheduler';
 
 type ActiveWorkspaceTab = 'extractor' | 'queue' | 'integrity' | 'index' | 'docs';
 
@@ -121,6 +137,22 @@ export default function App() {
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig>(() =>
     loadProxyConfig()
   );
+  const [concurrencyTelemetry, setConcurrencyTelemetry] =
+    useState<ConcurrencyTunerTelemetry>(() =>
+      createInitialConcurrencyTelemetry(loadProxyConfig())
+    );
+  const [schedulerConfig, setSchedulerConfig] = useState<SmartSchedulerConfig>(() =>
+    loadSchedulerConfig()
+  );
+  const [manualOverrideActive, setManualOverrideActive] = useState(false);
+  const [smartPauseConfig, setSmartPauseConfig] = useState<SmartPauseConfig>(() =>
+    loadSmartPauseConfig()
+  );
+  const [smartPauseState, setSmartPauseState] = useState<SmartPauseMonitorState>(
+    () => createInitialSmartPauseState()
+  );
+  const [clockTick, setClockTick] = useState<number>(() => Date.now());
+  const wasWithinWindowRef = useRef<boolean>(false);
   const [isQueueRunning, setIsQueueRunning] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isBundlingZip, setIsBundlingZip] = useState(false);
@@ -237,11 +269,11 @@ export default function App() {
     setActiveTaskId(null);
   };
 
-  // Load IndexedDB records, blobs & check portal health on mount
+  // Load IndexedDB records, lightweight blob task IDs & check portal health on mount
   useEffect(() => {
     getAllExtractedKhatianRecords().then(setTabularRecords);
-    getAllVerifiedPdfBlobs().then((blobs) => {
-      setVerifiedBlobTaskIds(new Set(blobs.map((b) => b.taskId)));
+    getAllVerifiedBlobTaskIds().then((ids) => {
+      setVerifiedBlobTaskIds(new Set(ids));
     });
     checkEporchaPortalHealth().then((res) => {
       setPortalHealth({
@@ -253,18 +285,125 @@ export default function App() {
     });
   }, []);
 
-  // Persist Queue & refresh verified blob IDs whenever tasks change
+  // Debounced persist Queue whenever tasks change (without scanning IndexedDB blobs)
   useEffect(() => {
-    savePersistedQueue(tasks);
-    getAllVerifiedPdfBlobs().then((blobs) => {
-      setVerifiedBlobTaskIds(new Set(blobs.map((b) => b.taskId)));
-    });
+    const timer = setTimeout(() => {
+      savePersistedQueue(tasks);
+    }, 250);
+    return () => clearTimeout(timer);
   }, [tasks]);
 
   const handleUpdateProxyConfig = (next: ProxyConfig) => {
     setProxyConfig(next);
     saveProxyConfig(next);
+    setConcurrencyTelemetry((prev) => ({
+      ...prev,
+      autoTuneEnabled: next.autoTuneConcurrency ?? true,
+      currentConcurrency: next.concurrency,
+      regime: getRegimeForConcurrency(next.concurrency),
+      lastAdjustmentReason:
+        next.autoTuneConcurrency ?? true
+          ? `Auto-Tuner active at ${next.concurrency}x workers (${next.minDelayMs}–${next.maxDelayMs}ms jitter).`
+          : `Manual concurrency locked at ${next.concurrency}x workers.`,
+    }));
   };
+
+  const handleUpdateSchedulerConfig = useCallback((next: SmartSchedulerConfig) => {
+    setSchedulerConfig(next);
+    saveSchedulerConfig(next);
+    if (!next.enabled) {
+      setManualOverrideActive(false);
+    }
+  }, []);
+
+  const schedulerEvaluation = useMemo(
+    () => evaluateWorkWindowStatus(schedulerConfig, new Date(clockTick)),
+    [schedulerConfig, clockTick]
+  );
+
+  // Tick the reference clock every 15 seconds for Smart Batch Scheduler window evaluation
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setClockTick(Date.now());
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Smart Batch Scheduler Automatic Start / Pause Orchestration
+  useEffect(() => {
+    if (!schedulerConfig.enabled) {
+      wasWithinWindowRef.current = schedulerEvaluation.isWithinWindow;
+      return;
+    }
+
+    const justEnteredWindow =
+      schedulerEvaluation.isWithinWindow && !wasWithinWindowRef.current;
+    wasWithinWindowRef.current = schedulerEvaluation.isWithinWindow;
+
+    if (schedulerEvaluation.isWithinWindow) {
+      // Clear manual override flag once inside official window
+      if (manualOverrideActive) {
+        setManualOverrideActive(false);
+      }
+
+      // Optionally retry failed tasks upon entering the off-peak window
+      if (justEnteredWindow && schedulerConfig.autoRetryFailedOnWindowStart) {
+        setTasks((prev) => {
+          const { updatedTasks, retriedCount } = retryFailedTasks(prev);
+          if (retriedCount > 0) {
+            savePersistedQueue(updatedTasks);
+          }
+          return updatedTasks;
+        });
+      }
+
+      const hasPendingQueued = tasks.some((t) => t.status === 'QUEUED');
+      if (hasPendingQueued && !isQueueRunning) {
+        setIsQueueRunning(true);
+        setEnqueueFeedback(
+          `Smart Batch Scheduler: Off-peak work window (${schedulerEvaluation.windowLabel12h}) active — queue automatically started.`
+        );
+      }
+    } else {
+      // Outside the work window
+      if (
+        schedulerConfig.autoPauseOutsideWindow &&
+        !manualOverrideActive &&
+        isQueueRunning
+      ) {
+        setIsQueueRunning(false);
+        setEnqueueFeedback(
+          `Smart Batch Scheduler: Outside work window (${schedulerEvaluation.windowLabel12h}). Queue paused on standby (${schedulerEvaluation.countdownText}).`
+        );
+      }
+    }
+  }, [
+    schedulerConfig,
+    schedulerEvaluation.isWithinWindow,
+    schedulerEvaluation.windowLabel12h,
+    schedulerEvaluation.countdownText,
+    manualOverrideActive,
+    tasks,
+    isQueueRunning,
+  ]);
+
+  const handleToggleManualOverride = useCallback(() => {
+    setManualOverrideActive((prev) => {
+      const next = !prev;
+      if (next) {
+        setIsQueueRunning(true);
+        setEnqueueFeedback(
+          'Smart Batch Scheduler: Manual override enabled — running queue immediately outside scheduled window.'
+        );
+      } else {
+        setIsQueueRunning(false);
+        setEnqueueFeedback(
+          `Smart Batch Scheduler: Returned to scheduled standby (${schedulerEvaluation.windowLabel12h}).`
+        );
+      }
+      return next;
+    });
+  }, [schedulerEvaluation.windowLabel12h]);
 
   const handleReorderTasks = useCallback(
     (sourceTaskId: string, targetTaskId: string) => {
@@ -344,11 +483,41 @@ export default function App() {
     setActiveTaskId(null);
   };
 
+  const inFlightTaskIdsRef = useRef<Set<string>>(new Set());
+  const tasksRef = useRef<QueueTask[]>(tasks);
+  tasksRef.current = tasks;
+  const proxyConfigRef = useRef<ProxyConfig>(proxyConfig);
+  proxyConfigRef.current = proxyConfig;
+  const concurrencyTelemetryRef = useRef<ConcurrencyTunerTelemetry>(concurrencyTelemetry);
+  concurrencyTelemetryRef.current = concurrencyTelemetry;
+  const smartPauseConfigRef = useRef<SmartPauseConfig>(smartPauseConfig);
+  smartPauseConfigRef.current = smartPauseConfig;
+  const smartPauseStateRef = useRef<SmartPauseMonitorState>(smartPauseState);
+  smartPauseStateRef.current = smartPauseState;
+
+  const handleUpdateSmartPauseConfig = useCallback((next: SmartPauseConfig) => {
+    smartPauseConfigRef.current = next;
+    setSmartPauseConfig(next);
+    saveSmartPauseConfig(next);
+  }, []);
+
+  const handleDismissOrResumeSmartPause = useCallback((resumeQueue: boolean) => {
+    const resetState = createInitialSmartPauseState();
+    smartPauseStateRef.current = resetState;
+    setSmartPauseState(resetState);
+    if (resumeQueue) {
+      setIsQueueRunning(true);
+      setEnqueueFeedback('Smart Pause monitor reset — queue execution resumed.');
+    }
+  }, []);
+
   const handleRunSingleTask = useCallback(
     async (taskId: string) => {
-      const target = tasks.find((t) => t.id === taskId);
+      if (inFlightTaskIdsRef.current.has(taskId)) return;
+      const target = tasksRef.current.find((t) => t.id === taskId);
       if (!target) return;
 
+      inFlightTaskIdsRef.current.add(taskId);
       setActiveTaskId(taskId);
       setTasks((prev) =>
         prev.map((t) =>
@@ -356,22 +525,116 @@ export default function App() {
         )
       );
 
-      const { updatedTask, extractedCount } = await processSingleQueueTask(
-        target,
-        proxyConfig
-      );
+      try {
+        const { updatedTask, extractedCount, latencyMs, timedOut } =
+          await processSingleQueueTask(target, proxyConfigRef.current);
 
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? updatedTask : t))
-      );
+        // Dynamically adjust proxyConfig.concurrency using AIMD Auto-Tuner
+        const { nextConfig, nextTelemetry, changed } =
+          evaluateAutoConcurrencyStep({
+            currentConfig: proxyConfigRef.current,
+            telemetry: concurrencyTelemetryRef.current,
+            sample: {
+              latencyMs,
+              httpStatus: updatedTask.httpStatus ?? 0,
+              timedOut,
+            },
+          });
 
-      if (extractedCount > 0) {
-        const refreshed = await getAllExtractedKhatianRecords();
-        setTabularRecords(refreshed);
+        concurrencyTelemetryRef.current = nextTelemetry;
+        setConcurrencyTelemetry(nextTelemetry);
+
+        if (changed) {
+          proxyConfigRef.current = nextConfig;
+          setProxyConfig(nextConfig);
+          saveProxyConfig(nextConfig);
+          setEnqueueFeedback(nextTelemetry.lastAdjustmentReason);
+        }
+
+        // Evaluate Smart Pause Portal Health Monitor (3 consecutive timeouts OR >3000ms spike for >5 mins)
+        const smartPauseEval = evaluateSmartPauseStep({
+          config: smartPauseConfigRef.current,
+          currentState: smartPauseStateRef.current,
+          sample: {
+            latencyMs,
+            httpStatus: updatedTask.httpStatus ?? 0,
+            timedOut,
+          },
+        });
+
+        smartPauseStateRef.current = smartPauseEval.nextState;
+        setSmartPauseState(smartPauseEval.nextState);
+
+        if (smartPauseEval.newlyTriggered) {
+          if (smartPauseEval.shouldSuspendQueue) {
+            setIsQueueRunning(false);
+          }
+          if (smartPauseEval.nextState.triggerMessage) {
+            setEnqueueFeedback(smartPauseEval.nextState.triggerMessage);
+          }
+          if (
+            typeof Notification !== 'undefined' &&
+            Notification.permission === 'granted' &&
+            smartPauseEval.nextState.triggerMessage
+          ) {
+            try {
+              new Notification('LRgetBD Pro — Smart Pause Alert', {
+                body: smartPauseEval.nextState.triggerMessage,
+              });
+            } catch {
+              // Ignore Notification API restrictions in sandboxed environments
+            }
+          }
+        }
+
+        // Enforce Smart Pause per-task automatic retry budget -> auto-retry or flag PERMANENT_FAILURE
+        const {
+          nextTask: finalTaskWithBudget,
+          flaggedPermanentFailure,
+        } = applyTaskRetryBudgetPolicy(
+          updatedTask,
+          smartPauseConfigRef.current.maxTaskRetryBudget || 3
+        );
+
+        if (flaggedPermanentFailure && !smartPauseEval.newlyTriggered) {
+          setEnqueueFeedback(
+            `Task ${finalTaskWithBudget.fileName} flagged as PERMANENT_FAILURE after exhausting ${smartPauseConfigRef.current.maxTaskRetryBudget || 3} retry budget.`
+          );
+        }
+
+        setTasks((prev) => {
+          const next = prev.map((t) =>
+            t.id === taskId ? finalTaskWithBudget : t
+          );
+          savePersistedQueue(next);
+          return next;
+        });
+
+        if (
+          finalTaskWithBudget.status === 'CACHED_INDEXEDDB' ||
+          finalTaskWithBudget.status === 'HTML_INDEX_EXTRACTED'
+        ) {
+          setVerifiedBlobTaskIds((prev) => {
+            if (prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.add(taskId);
+            return next;
+          });
+        }
+
+        if (extractedCount > 0) {
+          const refreshed = await getAllExtractedKhatianRecords();
+          setTabularRecords(refreshed);
+        }
+      } finally {
+        inFlightTaskIdsRef.current.delete(taskId);
+        const remainingInFlight = Array.from(inFlightTaskIdsRef.current);
+        setActiveTaskId(
+          remainingInFlight.length > 0 ? remainingInFlight[0] : null
+        );
       }
-      setActiveTaskId(null);
     },
-    [tasks, proxyConfig]
+    []
   );
 
   const queueStepCounterRef = useRef(0);
@@ -412,38 +675,64 @@ export default function App() {
     });
   }, [currentTrackedTaskId, autoScrollPreview, activeTab]);
 
+  // Parallel Batch Worker Pool: runs up to proxyConfig.concurrency tasks concurrently
   useEffect(() => {
     if (!isQueueRunning) return;
-    if (activeTaskId !== null) return;
 
-    const nextQueued = tasks.find((t) => t.status === 'QUEUED');
-    if (!nextQueued) {
-      setIsQueueRunning(false);
+    const maxConcurrency = Math.max(1, proxyConfig.concurrency || 3);
+    const inFlightCount = inFlightTaskIdsRef.current.size;
+    const availableSlots = maxConcurrency - inFlightCount;
+    if (availableSlots <= 0) return;
+
+    const queuedCandidates = tasks
+      .filter((t) => t.status === 'QUEUED' && !inFlightTaskIdsRef.current.has(t.id))
+      .slice(0, availableSlots);
+
+    if (queuedCandidates.length === 0) {
+      if (inFlightCount === 0) {
+        setIsQueueRunning(false);
+      }
       return;
     }
 
-    const jitterMs = calculatePoliteJitterDelay(
-      proxyConfig.minDelayMs,
-      proxyConfig.maxDelayMs,
-      queueStepCounterRef.current++
-    );
+    const timers = queuedCandidates.map((candidate, slotIdx) => {
+      const baseJitterMs = calculatePoliteJitterDelay(
+        proxyConfig.minDelayMs,
+        proxyConfig.maxDelayMs,
+        queueStepCounterRef.current++
+      );
+      const staggerMs = slotIdx === 0 && inFlightCount === 0 ? 20 : baseJitterMs + slotIdx * 45;
+      return setTimeout(() => {
+        void handleRunSingleTask(candidate.id);
+      }, staggerMs);
+    });
 
-    const timer = setTimeout(() => {
-      handleRunSingleTask(nextQueued.id);
-    }, jitterMs);
-
-    return () => clearTimeout(timer);
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+    };
   }, [isQueueRunning, activeTaskId, tasks, proxyConfig, handleRunSingleTask]);
 
   const handleRetryFailed = () => {
-    const { updatedTasks, retriedCount } = retryFailedTasks(tasks);
+    const budget = smartPauseConfig.maxTaskRetryBudget || 3;
+    const { updatedTasks, retriedCount, exhaustedCount } = retryFailedTasks(
+      tasks,
+      budget
+    );
     setTasks(updatedTasks);
     savePersistedQueue(updatedTasks);
-    setEnqueueFeedback(
-      retriedCount > 0
-        ? `Reset ${retriedCount} non-PDF / CORS-blocked tasks back to QUEUED.`
-        : 'No failed or blocked tasks found in queue to retry.'
-    );
+    if (retriedCount > 0 || exhaustedCount > 0) {
+      setEnqueueFeedback(
+        `Reset ${retriedCount} tasks to QUEUED${
+          exhaustedCount > 0
+            ? ` · Flagged ${exhaustedCount} tasks as PERMANENT_FAILURE (exhausted ${budget}-retry budget).`
+            : '.'
+        }`
+      );
+    } else {
+      setEnqueueFeedback(
+        'No retry-eligible failed tasks found in queue (permanent failures are excluded).'
+      );
+    }
   };
 
   const handleRequeueIntegrityFlagged = useCallback(
@@ -465,7 +754,7 @@ export default function App() {
   };
 
   const handleApplyBatchRename = async (renameMap: Map<string, string>) => {
-    const { updatedCount } = await batchUpdateVerifiedBlobFileNames(renameMap);
+    await batchUpdateVerifiedBlobFileNames(renameMap);
     const updatedTasks = tasks.map((t) => {
       if (renameMap.has(t.id)) {
         return {
@@ -478,13 +767,14 @@ export default function App() {
     });
     setTasks(updatedTasks);
     savePersistedQueue(updatedTasks);
-    const refreshedBlobs = await getAllVerifiedPdfBlobs();
-    setVerifiedBlobTaskIds(new Set(refreshedBlobs.map((b) => b.taskId)));
+    const refreshedIds = await getAllVerifiedBlobTaskIds();
+    setVerifiedBlobTaskIds(new Set(refreshedIds));
   };
 
   const handleClearQueue = async () => {
     setIsQueueRunning(false);
     setTasks([]);
+    setVerifiedBlobTaskIds(new Set());
     await clearAllVerifiedPdfBlobs();
     setLastBundleStatus(null);
   };
@@ -505,15 +795,15 @@ export default function App() {
     setIsBundlingZip(true);
     setLastBundleStatus('Preparing structured ZIP archive...');
     try {
-      const { zipBlob, verifiedPdfCount, auditFileName } =
+      const { zipBlob, zipFileName } =
         await bundleTasksToStructuredZip({
           tasks,
           onProgress: (percent, statusText) => {
             setLastBundleStatus(`${percent}%: ${statusText}`);
           },
         });
-      triggerZipDownload(zipBlob, auditFileName);
-      setLastBundleStatus(`Successfully downloaded ${auditFileName}`);
+      triggerZipDownload(zipBlob, zipFileName);
+      setLastBundleStatus(`Successfully downloaded ${zipFileName}`);
     } catch (error) {
       setLastBundleStatus(`ZIP packaging error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -628,6 +918,39 @@ export default function App() {
           onViewQueue={() => setActiveTab('queue')}
           onToggleQueue={() => setIsQueueRunning((prev) => !prev)}
         />
+
+        {smartPauseState.isTriggered && (
+          <div
+            data-testid="global-smart-pause-notification"
+            role="alert"
+            className="px-4 sm:px-8 py-2.5 bg-rose-950/95 border-t border-rose-500/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+          >
+            <div className="flex items-center gap-2 text-xs text-rose-100">
+              <span className="px-2 py-0.5 rounded bg-rose-500/30 border border-rose-400/50 text-[10px] font-bold uppercase tracking-wider text-rose-200 shrink-0">
+                Smart Pause Alert
+              </span>
+              <span className="font-medium">
+                {smartPauseState.triggerMessage}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleDismissOrResumeSmartPause(true)}
+                className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold cursor-pointer"
+              >
+                Resume Queue
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDismissOrResumeSmartPause(false)}
+                className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-rose-500/40 text-rose-200 text-[11px] font-medium cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="md:hidden flex items-center justify-around border-b border-slate-800 bg-slate-900 px-2 py-1.5 gap-1 overflow-x-auto">
@@ -678,6 +1001,14 @@ export default function App() {
                     ? `HTTP ${portalHealth.status} (${portalHealth.latencyMs}ms)`
                     : 'Relay Active'
                   : 'Checking...'}
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="text-sky-400 font-semibold">
+                {proxyConfig.autoTuneConcurrency ?? true ? 'Auto-Tuner' : 'Concurrency'}:{' '}
+                {proxyConfig.concurrency}x
+                {concurrencyTelemetry.rollingLatencyMs > 0
+                  ? ` (${concurrencyTelemetry.rollingLatencyMs}ms avg)`
+                  : ''}
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
@@ -946,7 +1277,16 @@ export default function App() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setIsQueueRunning(!isQueueRunning)}
+                      onClick={() => {
+                        if (
+                          schedulerConfig.enabled &&
+                          !schedulerEvaluation.isWithinWindow &&
+                          !isQueueRunning
+                        ) {
+                          setManualOverrideActive(true);
+                        }
+                        setIsQueueRunning(!isQueueRunning);
+                      }}
                       className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-[11px] font-bold transition-all ${
                         isQueueRunning
                           ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
@@ -961,6 +1301,17 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+
+                <SmartBatchScheduler
+                  config={schedulerConfig}
+                  evaluation={schedulerEvaluation}
+                  onChangeConfig={handleUpdateSchedulerConfig}
+                  isQueueRunning={isQueueRunning}
+                  manualOverrideActive={manualOverrideActive}
+                  onToggleManualOverride={handleToggleManualOverride}
+                  queuedCount={queueMetrics.queuedCount}
+                  compact
+                />
 
                 <div 
                   ref={queuePreviewContainerRef}
@@ -1055,7 +1406,16 @@ export default function App() {
               tasks={tasks}
               isQueueRunning={isQueueRunning}
               activeTaskId={activeTaskId}
-              onToggleQueue={() => setIsQueueRunning(!isQueueRunning)}
+              onToggleQueue={() => {
+                if (
+                  schedulerConfig.enabled &&
+                  !schedulerEvaluation.isWithinWindow &&
+                  !isQueueRunning
+                ) {
+                  setManualOverrideActive(true);
+                }
+                setIsQueueRunning(!isQueueRunning);
+              }}
               onRunSingleTask={handleRunSingleTask}
               onRetryFailed={handleRetryFailed}
               onClearQueue={handleClearQueue}
@@ -1065,6 +1425,7 @@ export default function App() {
               lastBundleStatus={lastBundleStatus}
               proxyConfig={proxyConfig}
               onUpdateProxyConfig={handleUpdateProxyConfig}
+              concurrencyTelemetry={concurrencyTelemetry}
               onReorderTasks={handleReorderTasks}
               onMoveTaskPriority={handleMoveTaskPriority}
               onPrioritizeMouza={handlePrioritizeMouza}
@@ -1072,6 +1433,15 @@ export default function App() {
               onBulkAction={handleBulkAction}
               verifiedBlobTaskIds={verifiedBlobTaskIds}
               onBatchRename={() => setBatchRenameModalOpen(true)}
+              schedulerConfig={schedulerConfig}
+              schedulerEvaluation={schedulerEvaluation}
+              onUpdateSchedulerConfig={handleUpdateSchedulerConfig}
+              manualOverrideActive={manualOverrideActive}
+              onToggleManualOverride={handleToggleManualOverride}
+              smartPauseConfig={smartPauseConfig}
+              smartPauseState={smartPauseState}
+              onUpdateSmartPauseConfig={handleUpdateSmartPauseConfig}
+              onDismissOrResumeSmartPause={handleDismissOrResumeSmartPause}
             />
           </div>
         )}
@@ -1090,8 +1460,8 @@ export default function App() {
           <div key="view-index" className="workspace-view-enter">
             <TabularIndexView
               records={tabularRecords}
-              onImport={handleImportRecords}
-              onClear={handleClearRecords}
+              onImportRecords={handleImportRecords}
+              onClearRecords={handleClearRecords}
             />
           </div>
         )}
@@ -1121,11 +1491,22 @@ export default function App() {
       </footer>
 
       {/* Modals */}
-      <ApkInstallerModal open={apkModalOpen} onOpenChange={setApkModalOpen} />
-      <GoogleDriveSyncModal open={driveModalOpen} onOpenChange={setDriveModalOpen} user={currentUser} />
+      <ApkInstallerModal
+        isOpen={apkModalOpen}
+        onClose={() => setApkModalOpen(false)}
+      />
+      <GoogleDriveSyncModal
+        isOpen={driveModalOpen}
+        onClose={() => setDriveModalOpen(false)}
+        currentUser={currentUser}
+        onUserChange={setCurrentUser}
+        tasks={tasks}
+        localRecords={tabularRecords}
+        onImportCloudRecords={handleImportRecords}
+      />
       <BatchRenameModal
-        open={batchRenameModalOpen}
-        onOpenChange={setBatchRenameModalOpen}
+        isOpen={batchRenameModalOpen}
+        onClose={() => setBatchRenameModalOpen(false)}
         tasks={tasks}
         verifiedBlobTaskIds={verifiedBlobTaskIds}
         onApplyRename={handleApplyBatchRename}

@@ -124,15 +124,25 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
           selectedId={geo.selectedUpazilaId}
           onIdSelected={geo.setSelectedUpazilaId}
           isEnabled={!!geo.selectedDistrictId && !geo.isDiscovering}
-          isLoading={geo.isDiscovering && !!geo.selectedDistrictId && !geo.selectedUpazilaId}
+          isLoading={geo.isDiscovering}
         />
       </div>
 
       {geo.discoveryStatus && (
         <div className={`p-3 rounded-lg border flex items-start gap-3 ${
-          geo.discoveryStatus.includes('No') ? 'bg-amber-500/10 border-amber-500/20 text-amber-200' : 'bg-slate-950 border-slate-800 text-slate-300'
+          geo.discoveryStatus.includes('No') || geo.discoveryStatus.includes('Failed')
+            ? 'bg-amber-500/10 border-amber-500/20 text-amber-200'
+            : geo.isDiscovering
+            ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300'
+            : 'bg-slate-950 border-slate-800 text-slate-200'
         }`}>
-          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          {geo.isDiscovering ? (
+            <Loader2 className="w-4 h-4 mt-0.5 shrink-0 animate-spin text-emerald-400" />
+          ) : geo.discoveryStatus.includes('No') || geo.discoveryStatus.includes('Failed') ? (
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
+          )}
           <div className="flex-1">
             <p className="text-xs font-medium">{geo.discoveryStatus}</p>
             {geo.discoveryStatus.includes('No') && (
@@ -153,10 +163,13 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
             <div className="space-y-1">
               <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Mouza Discovery Successful</span>
+                <span>Found in URL: {geo.totalMouzasCount} Mouzas</span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300">
+                  {geo.selectedCount} Auto-Selected (100%)
+                </span>
               </div>
               <div className="text-[11px] text-slate-400 font-mono-tabular">
-                Upazila: {geo.activeUpazila.nameEn} · Discovered: {geo.totalMouzasCount} · Selected: {geo.selectedCount}
+                Upazila: {geo.activeUpazila.nameEn} ({geo.activeUpazila.nameBn}) · All {geo.totalMouzasCount} Mouzas discovered from eporcha.tech URL are automatically selected
               </div>
             </div>
 
@@ -171,16 +184,21 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
                 onClick={geo.selectAllMouzas}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-[10px] text-emerald-400 font-bold hover:bg-emerald-600/30"
               >
-                Select All Mouzas
+                Select All Mouzas ({geo.totalMouzasCount})
               </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-900">
-             <div className="flex items-center gap-4 text-[10px] text-slate-500 uppercase tracking-widest font-bold">
-                <span>Verified Records</span>
-                <span>Provenance: eporcha.tech</span>
-                <span>Status: VERIFIED</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-900 text-[10px] text-slate-400 font-mono-tabular">
+             <div className="flex items-center gap-3">
+                <span className="text-emerald-400 font-semibold">100% Auto-Selected</span>
+                <span>•</span>
+                <span>Portal: eporcha.tech</span>
+                <span>•</span>
+                <span>Upazila: {geo.activeUpazila.nameEn}</span>
+             </div>
+             <div className="text-slate-500">
+                {geo.selectedCount} of {geo.totalMouzasCount} Mouzas Queued
              </div>
           </div>
         </div>

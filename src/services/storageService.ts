@@ -2,6 +2,8 @@ import {
   KhatianRecord,
   ProxyConfig,
   QueueTask,
+  SmartPauseConfig,
+  SmartSchedulerConfig,
   VerifiedBlobRecord,
 } from '../types/land';
 import { detectDefaultTransportMode } from './eporchaTechClient';
@@ -14,6 +16,8 @@ const RECORD_STORE = 'lr_eporcha_records_v2';
 
 const QUEUE_STORAGE_KEY = 'lr_eporcha_queue_v2';
 const PROXY_CONFIG_KEY = 'lr_eporcha_proxy_config_v2';
+const SCHEDULER_CONFIG_KEY = 'lr_eporcha_scheduler_config_v1';
+const SMART_PAUSE_CONFIG_KEY = 'lr_eporcha_smart_pause_config_v1';
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -145,6 +149,26 @@ export async function getAllVerifiedPdfBlobs(): Promise<VerifiedBlobRecord[]> {
   });
 }
 
+export async function getAllVerifiedBlobTaskIds(): Promise<string[]> {
+  try {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BLOB_STORE, 'readonly');
+      const req = tx.objectStore(BLOB_STORE).getAllKeys();
+      req.onsuccess = () => {
+        db.close();
+        resolve(((req.result as IDBValidKey[]) || []).map((k) => String(k)));
+      };
+      req.onerror = () => {
+        db.close();
+        reject(req.error);
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function clearAllVerifiedPdfBlobs(): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
@@ -248,18 +272,28 @@ export function loadProxyConfig(): ProxyConfig {
     preferredMode: detectDefaultTransportMode(),
     termuxProxyUrl: 'http://127.0.0.1:8787/proxy?url=',
     customCloudflareProxyUrl: '',
-    concurrency: 1,
-    minDelayMs: 600,
-    maxDelayMs: 1200,
+    concurrency: 3,
+    minDelayMs: 120,
+    maxDelayMs: 250,
+    autoTuneConcurrency: true,
   };
   try {
     const raw = localStorage.getItem(PROXY_CONFIG_KEY);
     if (!raw) return defaultConfig;
     const parsed = JSON.parse(raw);
-    return {
+    const merged: ProxyConfig = {
       ...defaultConfig,
       ...parsed,
     };
+    // Auto-upgrade legacy slow 600-1200ms sequential config to fast 120-250ms batch config
+    if (merged.minDelayMs >= 600 && merged.maxDelayMs >= 1200) {
+      merged.minDelayMs = 120;
+      merged.maxDelayMs = 250;
+      if (merged.concurrency === 1) {
+        merged.concurrency = 3;
+      }
+    }
+    return merged;
   } catch {
     return defaultConfig;
   }
@@ -272,3 +306,65 @@ export function saveProxyConfig(config: ProxyConfig): void {
     // Ignore
   }
 }
+
+export function loadSchedulerConfig(): SmartSchedulerConfig {
+  const defaultScheduler: SmartSchedulerConfig = {
+    enabled: false,
+    startTime: '02:00',
+    endTime: '06:00',
+    timezoneMode: 'BD_STANDARD',
+    autoPauseOutsideWindow: true,
+    autoRetryFailedOnWindowStart: true,
+  };
+  try {
+    const raw = localStorage.getItem(SCHEDULER_CONFIG_KEY);
+    if (!raw) return defaultScheduler;
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaultScheduler,
+      ...parsed,
+    };
+  } catch {
+    return defaultScheduler;
+  }
+}
+
+export function saveSchedulerConfig(config: SmartSchedulerConfig): void {
+  try {
+    localStorage.setItem(SCHEDULER_CONFIG_KEY, JSON.stringify(config));
+  } catch {
+    // Ignore
+  }
+}
+
+export function loadSmartPauseConfig(): SmartPauseConfig {
+  const defaultSmartPause: SmartPauseConfig = {
+    enabled: true,
+    actionMode: 'AUTO_SUSPEND_AND_NOTIFY',
+    consecutiveTimeoutsThreshold: 3,
+    sustainedLatencyThresholdMs: 3000,
+    sustainedDurationMinutes: 5,
+    maxTaskRetryBudget: 3,
+  };
+  try {
+    const raw = localStorage.getItem(SMART_PAUSE_CONFIG_KEY);
+    if (!raw) return defaultSmartPause;
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaultSmartPause,
+      ...parsed,
+    };
+  } catch {
+    return defaultSmartPause;
+  }
+}
+
+export function saveSmartPauseConfig(config: SmartPauseConfig): void {
+  try {
+    localStorage.setItem(SMART_PAUSE_CONFIG_KEY, JSON.stringify(config));
+  } catch {
+    // Ignore
+  }
+}
+
+

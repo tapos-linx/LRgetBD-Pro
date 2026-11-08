@@ -8,15 +8,21 @@ export class CancellationException extends Error {
 import JSZip from 'jszip';
 import {
   BookStyleConfig,
+  ConcurrencyTier,
+  ConcurrencyTunerTelemetry,
   DistrictNode,
   DivisionNode,
   EporchaEndpointType,
   MouzaNode,
   ProxyConfig,
   QueueTask,
+  SmartPauseConfig,
+  SmartPauseMonitorState,
+  SmartSchedulerConfig,
   SurveyType,
   UpazilaNode,
   VerifiedBlobRecord,
+  WorkWindowEvaluation,
 } from '../types/land';
 import { generateTasksForMouzasAndEndpoints } from '../data/geoHierarchy';
 import { hasPdfMagicSignature, MIN_VALID_PDF_BYTES } from './binaryValidator';
@@ -145,8 +151,8 @@ export function buildUnifiedQueueForDocumentSelection(params: {
   };
 }
 
-export function calculatePoliteJitterDelay(minMs = 450, maxMs = 900, seedIndex = 0): number {
-  const clampedMin = Math.max(200, Math.min(minMs, maxMs));
+export function calculatePoliteJitterDelay(minMs = 120, maxMs = 250, seedIndex = 0): number {
+  const clampedMin = Math.max(80, Math.min(minMs, maxMs));
   const clampedMax = Math.max(clampedMin, maxMs);
   const spread = clampedMax - clampedMin;
   if (spread === 0) return clampedMin;
@@ -156,15 +162,22 @@ export function calculatePoliteJitterDelay(minMs = 450, maxMs = 900, seedIndex =
 }
 
 /**
- * Resets all tasks that previously failed or encountered CORS errors back to QUEUED,
- * incrementing their retryCount and updating the timestamp.
+ * Resets tasks that previously failed or encountered CORS errors back to QUEUED,
+ * incrementing their retryCount and enforcing the user's configured automatic retry budget.
+ * Tasks that exhaust `maxTaskRetryBudget` are flagged as 'PERMANENT_FAILURE'.
  */
-export function retryFailedTasks(tasks: QueueTask[]): {
+export function retryFailedTasks(
+  tasks: QueueTask[],
+  maxTaskRetryBudget = 3
+): {
   updatedTasks: QueueTask[];
   retriedCount: number;
+  exhaustedCount: number;
 } {
   const nowIso = new Date().toISOString();
-  let count = 0;
+  const budget = Math.max(1, maxTaskRetryBudget || 3);
+  let retriedCount = 0;
+  let exhaustedCount = 0;
 
   const updatedTasks = tasks.map((t) => {
     if (
@@ -172,11 +185,22 @@ export function retryFailedTasks(tasks: QueueTask[]): {
       t.status === 'CORS_BRIDGE_REQUIRED' ||
       t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH'
     ) {
-      count++;
+      const nextRetryCount = (t.retryCount || 0) + 1;
+      if (nextRetryCount >= budget) {
+        exhaustedCount++;
+        return {
+          ...t,
+          status: 'PERMANENT_FAILURE' as const,
+          retryCount: nextRetryCount,
+          errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget (${t.errorMessage || 'Dead or unreachable portal link'}).`,
+          updatedAt: nowIso,
+        };
+      }
+      retriedCount++;
       return {
         ...t,
         status: 'QUEUED' as const,
-        retryCount: (t.retryCount || 0) + 1,
+        retryCount: nextRetryCount,
         errorMessage: undefined,
         updatedAt: nowIso,
       };
@@ -184,7 +208,65 @@ export function retryFailedTasks(tasks: QueueTask[]): {
     return t;
   });
 
-  return { updatedTasks, retriedCount: count };
+  return { updatedTasks, retriedCount, exhaustedCount };
+}
+
+/**
+ * Enforces the Smart Pause per-task automatic retry budget (`maxTaskRetryBudget`) after a task fetch attempt:
+ * - Successful tasks (`CACHED_INDEXEDDB`, `HTML_INDEX_EXTRACTED`) are returned unchanged.
+ * - Failed tasks increment `retryCount`:
+ *   - If `retryCount < maxTaskRetryBudget`, the task is automatically re-queued (`QUEUED`) for retry.
+ *   - If `retryCount >= maxTaskRetryBudget`, the task is automatically flagged as `'PERMANENT_FAILURE'`
+ *     so the queue stops wasting resources on dead links.
+ */
+export function applyTaskRetryBudgetPolicy(
+  task: QueueTask,
+  maxTaskRetryBudget = 3
+): {
+  nextTask: QueueTask;
+  autoRequeued: boolean;
+  flaggedPermanentFailure: boolean;
+} {
+  if (
+    task.status === 'CACHED_INDEXEDDB' ||
+    task.status === 'HTML_INDEX_EXTRACTED'
+  ) {
+    return {
+      nextTask: task,
+      autoRequeued: false,
+      flaggedPermanentFailure: false,
+    };
+  }
+
+  const budget = Math.max(1, maxTaskRetryBudget || 3);
+  const nextRetryCount = (task.retryCount || 0) + 1;
+  const nowIso = task.updatedAt || new Date().toISOString();
+
+  if (nextRetryCount >= budget) {
+    return {
+      nextTask: {
+        ...task,
+        status: 'PERMANENT_FAILURE',
+        retryCount: nextRetryCount,
+        errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget — ${task.errorMessage || 'Dead or unreachable portal link'}`,
+        updatedAt: nowIso,
+      },
+      autoRequeued: false,
+      flaggedPermanentFailure: true,
+    };
+  }
+
+  return {
+    nextTask: {
+      ...task,
+      status: 'QUEUED',
+      retryCount: nextRetryCount,
+      errorMessage: `Auto-Retry ${nextRetryCount}/${budget} scheduled — ${task.errorMessage || 'Transient portal failure'}`,
+      updatedAt: nowIso,
+    },
+    autoRequeued: true,
+    flaggedPermanentFailure: false,
+  };
 }
 
 /**
@@ -350,9 +432,23 @@ export async function processSingleQueueTaskWithRetry(
 export async function processSingleQueueTask(
   task: QueueTask,
   proxyConfig: ProxyConfig
-): Promise<{ updatedTask: QueueTask; extractedCount: number }> {
+): Promise<{
+  updatedTask: QueueTask;
+  extractedCount: number;
+  latencyMs: number;
+  timedOut: boolean;
+}> {
+  const startMs = Date.now();
   const outcome = await fetchFromEporchaTech(task, proxyConfig);
+  const latencyMs = Math.max(1, Date.now() - startMs);
   const nowIso = new Date().toISOString();
+  const isTimeoutOrRateLimit =
+    outcome.httpStatus === 0 ||
+    outcome.httpStatus === 429 ||
+    outcome.httpStatus === 502 ||
+    outcome.httpStatus === 503 ||
+    outcome.httpStatus === 504 ||
+    Boolean(outcome.errorMessage && /abort|timeout|timed out/i.test(outcome.errorMessage));
 
   if (!outcome.buffer || !outcome.validation) {
     return {
@@ -360,6 +456,7 @@ export async function processSingleQueueTask(
         ...task,
         status: 'CORS_BRIDGE_REQUIRED',
         httpStatus: outcome.httpStatus,
+        latencyMs,
         transportUsed: outcome.transportUsed,
         pdfVerified: false,
         errorMessage:
@@ -368,6 +465,8 @@ export async function processSingleQueueTask(
         updatedAt: nowIso,
       },
       extractedCount: 0,
+      latencyMs,
+      timedOut: true,
     };
   }
 
@@ -398,6 +497,7 @@ export async function processSingleQueueTask(
         ...task,
         status: 'CACHED_INDEXEDDB',
         httpStatus: outcome.httpStatus,
+        latencyMs,
         byteLength: validation.byteLength,
         magicBytesHex: validation.magicBytesHex,
         pdfVerified: true,
@@ -407,6 +507,8 @@ export async function processSingleQueueTask(
         updatedAt: nowIso,
       },
       extractedCount: validation.extractedRecords.length,
+      latencyMs,
+      timedOut: false,
     };
   }
 
@@ -437,6 +539,7 @@ export async function processSingleQueueTask(
         ...task,
         status: 'HTML_INDEX_EXTRACTED',
         httpStatus: outcome.httpStatus,
+        latencyMs,
         byteLength: validation.byteLength,
         magicBytesHex: validation.magicBytesHex,
         pdfVerified: false,
@@ -446,6 +549,8 @@ export async function processSingleQueueTask(
         updatedAt: nowIso,
       },
       extractedCount: validation.extractedRecords.length,
+      latencyMs,
+      timedOut: false,
     };
   }
 
@@ -457,6 +562,7 @@ export async function processSingleQueueTask(
       status:
         outcome.httpStatus === 0 ? 'CORS_BRIDGE_REQUIRED' : 'NOT_AVAILABLE_ON_EPORCHA_TECH',
       httpStatus: outcome.httpStatus,
+      latencyMs,
       byteLength: validation.byteLength,
       magicBytesHex: validation.magicBytesHex,
       pdfVerified: false,
@@ -468,6 +574,8 @@ export async function processSingleQueueTask(
       updatedAt: nowIso,
     },
     extractedCount: 0,
+    latencyMs,
+    timedOut: isTimeoutOrRateLimit,
   };
 }
 
@@ -651,7 +759,12 @@ export function calculateQueueProgress(
       completedCount++;
     } else if (t.status === 'QUEUED') {
       queuedCount++;
-    } else if (t.status === 'FAILED_RETRY' || t.status === 'CORS_BRIDGE_REQUIRED') {
+    } else if (
+      t.status === 'FAILED_RETRY' ||
+      t.status === 'CORS_BRIDGE_REQUIRED' ||
+      t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH' ||
+      t.status === 'PERMANENT_FAILURE'
+    ) {
       failedCount++;
     }
 
@@ -1295,6 +1408,624 @@ export function requeueIntegrityFlaggedTasks(
 
   return { updatedTasks, requeuedCount };
 }
+
+/**
+ * Parses an "HH:mm" time string (e.g. "02:00" or "14:30") into minutes from midnight (0-1439).
+ */
+export function parseHHMMToMinutes(hhmm: string, fallbackMinutes = 120): number {
+  if (!hhmm || !hhmm.includes(':')) return fallbackMinutes;
+  const [hStr, mStr] = hhmm.split(':');
+  const h = Number.parseInt(hStr, 10);
+  const m = Number.parseInt(mStr, 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return fallbackMinutes;
+  const clampedH = Math.max(0, Math.min(23, h));
+  const clampedM = Math.max(0, Math.min(59, m));
+  return clampedH * 60 + clampedM;
+}
+
+/**
+ * Formats minutes since midnight into a 12-hour string like "2:00 AM" or "6:00 AM".
+ */
+export function formatMinutesTo12Hour(totalMinutes: number): string {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hour24 = Math.floor(normalized / 60);
+  const minute = normalized % 60;
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+export function formatDurationMinutes(minutes: number): string {
+  const clamped = Math.max(0, Math.round(minutes));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/**
+ * Evaluates whether the current time falls inside the user's configured Smart Batch Scheduler
+ * work window (e.g., 02:00 - 06:00 / 2 AM - 6 AM) in either Bangladesh Standard Time (UTC+6)
+ * or the user's local system clock, and estimates portal traffic load on eporcha.tech.
+ */
+export function evaluateWorkWindowStatus(
+  config: SmartSchedulerConfig,
+  referenceDate: Date = new Date()
+): WorkWindowEvaluation {
+  let currentHour = referenceDate.getHours();
+  let currentMinute = referenceDate.getMinutes();
+
+  if (config.timezoneMode === 'BD_STANDARD') {
+    // Bangladesh Standard Time is strictly UTC+6 (no DST)
+    const utcMs = referenceDate.getTime();
+    const bstDate = new Date(utcMs + 6 * 60 * 60 * 1000);
+    currentHour = bstDate.getUTCHours();
+    currentMinute = bstDate.getUTCMinutes();
+  }
+
+  const currentTotalMinutes = currentHour * 60 + currentMinute;
+  const startMinutes = parseHHMMToMinutes(config.startTime, 2 * 60); // default 02:00
+  const endMinutes = parseHHMMToMinutes(config.endTime, 6 * 60);     // default 06:00
+
+  let isWithinWindow = false;
+  let minutesUntilStart = 0;
+  let minutesUntilEnd = 0;
+
+  if (startMinutes === endMinutes) {
+    // Full 24-hour window if start === end
+    isWithinWindow = true;
+    minutesUntilStart = 0;
+    minutesUntilEnd = 1440;
+  } else if (startMinutes < endMinutes) {
+    // Standard daytime or post-midnight window (e.g., 02:00 -> 06:00)
+    isWithinWindow =
+      currentTotalMinutes >= startMinutes && currentTotalMinutes < endMinutes;
+    if (isWithinWindow) {
+      minutesUntilEnd = endMinutes - currentTotalMinutes;
+      minutesUntilStart = 0;
+    } else if (currentTotalMinutes < startMinutes) {
+      minutesUntilStart = startMinutes - currentTotalMinutes;
+      minutesUntilEnd = endMinutes - currentTotalMinutes;
+    } else {
+      minutesUntilStart = 1440 - currentTotalMinutes + startMinutes;
+      minutesUntilEnd = 1440 - currentTotalMinutes + endMinutes;
+    }
+  } else {
+    // Overnight window crossing midnight (e.g., 23:00 -> 05:00)
+    isWithinWindow =
+      currentTotalMinutes >= startMinutes || currentTotalMinutes < endMinutes;
+    if (isWithinWindow) {
+      minutesUntilStart = 0;
+      minutesUntilEnd =
+        currentTotalMinutes >= startMinutes
+          ? 1440 - currentTotalMinutes + endMinutes
+          : endMinutes - currentTotalMinutes;
+    } else {
+      minutesUntilStart = startMinutes - currentTotalMinutes;
+      minutesUntilEnd = 1440 - currentTotalMinutes + endMinutes;
+    }
+  }
+
+  // Estimate eporcha.tech portal traffic based on Bangladesh Standard Time hour
+  const utcMs = referenceDate.getTime();
+  const bstHour = new Date(utcMs + 6 * 60 * 60 * 1000).getUTCHours();
+  let portalTrafficEstimate: WorkWindowEvaluation['portalTrafficEstimate'] =
+    'MODERATE_TRAFFIC';
+  if (bstHour >= 1 && bstHour < 7) {
+    portalTrafficEstimate = 'OFF_PEAK_OPTIMAL';
+  } else if (bstHour >= 9 && bstHour <= 22) {
+    portalTrafficEstimate = 'PEAK_PORTAL_LOAD';
+  }
+
+  const tzSuffix = config.timezoneMode === 'BD_STANDARD' ? 'BST (UTC+6)' : 'Local';
+  const currentTimeHHMM = `${String(currentHour).padStart(2, '0')}:${String(
+    currentMinute
+  ).padStart(2, '0')}`;
+  const currentTime12h = `${formatMinutesTo12Hour(currentTotalMinutes)} ${tzSuffix}`;
+  const windowLabel12h = `${formatMinutesTo12Hour(startMinutes)} – ${formatMinutesTo12Hour(
+    endMinutes
+  )} ${tzSuffix}`;
+
+  const countdownText = isWithinWindow
+    ? `Active work window · ${formatDurationMinutes(minutesUntilEnd)} remaining`
+    : `Standby · Starts in ${formatDurationMinutes(minutesUntilStart)}`;
+
+  return {
+    isWithinWindow,
+    currentTimeHHMM,
+    currentTime12h,
+    windowLabel12h,
+    minutesUntilStart,
+    minutesUntilEnd,
+    countdownText,
+    portalTrafficEstimate,
+  };
+}
+
+export const CONCURRENCY_TIERS: readonly ConcurrencyTier[] = [1, 2, 3, 7];
+
+export function getRegimeForConcurrency(
+  tier: ConcurrencyTier
+): ConcurrencyTunerTelemetry['regime'] {
+  if (tier === 7) return 'TURBO_7X';
+  if (tier === 3) return 'FAST_3X';
+  if (tier === 2) return 'BALANCED_2X';
+  return 'SAFE_BACKOFF_1X';
+}
+
+export function getJitterBoundsForConcurrency(tier: ConcurrencyTier): {
+  minDelayMs: number;
+  maxDelayMs: number;
+} {
+  switch (tier) {
+    case 7:
+      return { minDelayMs: 80, maxDelayMs: 180 };
+    case 3:
+      return { minDelayMs: 120, maxDelayMs: 250 };
+    case 2:
+      return { minDelayMs: 220, maxDelayMs: 420 };
+    case 1:
+    default:
+      return { minDelayMs: 450, maxDelayMs: 850 };
+  }
+}
+
+export function createInitialConcurrencyTelemetry(
+  config: ProxyConfig
+): ConcurrencyTunerTelemetry {
+  const tier = config.concurrency || 3;
+  return {
+    autoTuneEnabled: config.autoTuneConcurrency ?? true,
+    currentConcurrency: tier,
+    rollingLatencyMs: 0,
+    lastLatencyMs: 0,
+    sampleCount: 0,
+    consecutiveFastCount: 0,
+    consecutiveSlowOrTimeoutCount: 0,
+    totalScaleUps: 0,
+    totalBackoffs: 0,
+    lastAdjustmentReason:
+      config.autoTuneConcurrency ?? true
+        ? `Auto-Tuner active at ${tier}x parallel workers — monitoring portal latency.`
+        : `Manual concurrency locked at ${tier}x parallel workers.`,
+    regime: getRegimeForConcurrency(tier),
+  };
+}
+
+/**
+ * AIMD (Additive Increase / Multiplicative Decrease) Automated Concurrency Tuner:
+ * Dynamically adjusts proxyConfig.concurrency (1 <-> 2 <-> 3 <-> 7) and polite jitter
+ * bounds based on observed portal latency and timeout/throttling events.
+ * - Increases speed when eporcha.tech responds quickly (< 1,000ms rolling latency).
+ * - Immediately backs off when timeouts (HTTP 0, 429, 502-504) or high latency (>= 3,200ms) occur.
+ */
+export function evaluateAutoConcurrencyStep(params: {
+  currentConfig: ProxyConfig;
+  telemetry: ConcurrencyTunerTelemetry;
+  sample: {
+    latencyMs: number;
+    httpStatus: number;
+    timedOut?: boolean;
+  };
+}): {
+  nextConfig: ProxyConfig;
+  nextTelemetry: ConcurrencyTunerTelemetry;
+  changed: boolean;
+} {
+  const { currentConfig, telemetry, sample } = params;
+  const autoTuneEnabled = currentConfig.autoTuneConcurrency ?? true;
+  const clampedLatency = Math.max(1, Math.round(sample.latencyMs));
+
+  // Exponential moving average (EMA) of latency: 60% previous rolling + 40% new sample
+  const nextRollingLatency =
+    telemetry.sampleCount === 0 || telemetry.rollingLatencyMs === 0
+      ? clampedLatency
+      : Math.round(telemetry.rollingLatencyMs * 0.6 + clampedLatency * 0.4);
+
+  const isTimeoutOrGatewayError =
+    Boolean(sample.timedOut) ||
+    sample.httpStatus === 0 ||
+    sample.httpStatus === 429 ||
+    sample.httpStatus === 502 ||
+    sample.httpStatus === 503 ||
+    sample.httpStatus === 504;
+
+  const isSevereLatencySpike = clampedLatency >= 3200 || nextRollingLatency >= 2800;
+  const isFastResponse =
+    !isTimeoutOrGatewayError &&
+    clampedLatency <= 1050 &&
+    nextRollingLatency <= 1000;
+
+  const currentTier = currentConfig.concurrency || 3;
+  const currentIdx = Math.max(0, CONCURRENCY_TIERS.indexOf(currentTier));
+
+  if (!autoTuneEnabled) {
+    return {
+      nextConfig: currentConfig,
+      nextTelemetry: {
+        ...telemetry,
+        autoTuneEnabled: false,
+        currentConcurrency: currentTier,
+        rollingLatencyMs: nextRollingLatency,
+        lastLatencyMs: clampedLatency,
+        sampleCount: telemetry.sampleCount + 1,
+        regime: getRegimeForConcurrency(currentTier),
+      },
+      changed: false,
+    };
+  }
+
+  // 1. Multiplicative / Immediate Backoff on Timeout, 429/5xx, or Severe Latency Spike
+  if (isTimeoutOrGatewayError || isSevereLatencySpike) {
+    const nextSlowStreak = telemetry.consecutiveSlowOrTimeoutCount + 1;
+    // Drop 2 tiers on hard timeout from 7x (7 -> 2), or 1 tier otherwise
+    const stepDown = isTimeoutOrGatewayError && currentTier === 7 ? 2 : 1;
+    const nextIdx = Math.max(0, currentIdx - stepDown);
+    const nextTier = CONCURRENCY_TIERS[nextIdx];
+    const jitter = getJitterBoundsForConcurrency(nextTier);
+    const changed = nextTier !== currentTier;
+
+    const triggerLabel = isTimeoutOrGatewayError
+      ? `timeout / HTTP ${sample.httpStatus || '0'}`
+      : `high latency (${clampedLatency}ms)`;
+
+    const reason = changed
+      ? `Auto-Backed Off ${currentTier}x → ${nextTier}x due to ${triggerLabel} (jitter ${jitter.minDelayMs}–${jitter.maxDelayMs}ms).`
+      : `Holding minimum 1x safe concurrency due to ${triggerLabel}.`;
+
+    return {
+      nextConfig: {
+        ...currentConfig,
+        concurrency: nextTier,
+        minDelayMs: jitter.minDelayMs,
+        maxDelayMs: jitter.maxDelayMs,
+      },
+      nextTelemetry: {
+        autoTuneEnabled: true,
+        currentConcurrency: nextTier,
+        rollingLatencyMs: nextRollingLatency,
+        lastLatencyMs: clampedLatency,
+        sampleCount: telemetry.sampleCount + 1,
+        consecutiveFastCount: 0,
+        consecutiveSlowOrTimeoutCount: nextSlowStreak,
+        totalScaleUps: telemetry.totalScaleUps,
+        totalBackoffs: changed ? telemetry.totalBackoffs + 1 : telemetry.totalBackoffs,
+        lastAdjustmentReason: reason,
+        regime: getRegimeForConcurrency(nextTier),
+      },
+      changed,
+    };
+  }
+
+  // 2. Additive Speed-Up when portal responds quickly (>= 2 consecutive fast responses)
+  if (isFastResponse) {
+    const nextFastStreak = telemetry.consecutiveFastCount + 1;
+    const shouldScaleUp =
+      nextFastStreak >= 2 && currentIdx < CONCURRENCY_TIERS.length - 1;
+
+    if (shouldScaleUp) {
+      const nextTier = CONCURRENCY_TIERS[currentIdx + 1];
+      const jitter = getJitterBoundsForConcurrency(nextTier);
+      return {
+        nextConfig: {
+          ...currentConfig,
+          concurrency: nextTier,
+          minDelayMs: jitter.minDelayMs,
+          maxDelayMs: jitter.maxDelayMs,
+        },
+        nextTelemetry: {
+          autoTuneEnabled: true,
+          currentConcurrency: nextTier,
+          rollingLatencyMs: nextRollingLatency,
+          lastLatencyMs: clampedLatency,
+          sampleCount: telemetry.sampleCount + 1,
+          consecutiveFastCount: 0, // reset streak after scaling up
+          consecutiveSlowOrTimeoutCount: 0,
+          totalScaleUps: telemetry.totalScaleUps + 1,
+          totalBackoffs: telemetry.totalBackoffs,
+          lastAdjustmentReason: `Auto-Scaled Up ${currentTier}x → ${nextTier}x (fast rolling latency ${nextRollingLatency}ms · jitter ${jitter.minDelayMs}–${jitter.maxDelayMs}ms).`,
+          regime: getRegimeForConcurrency(nextTier),
+        },
+        changed: true,
+      };
+    }
+
+    return {
+      nextConfig: currentConfig,
+      nextTelemetry: {
+        ...telemetry,
+        autoTuneEnabled: true,
+        currentConcurrency: currentTier,
+        rollingLatencyMs: nextRollingLatency,
+        lastLatencyMs: clampedLatency,
+        sampleCount: telemetry.sampleCount + 1,
+        consecutiveFastCount: nextFastStreak,
+        consecutiveSlowOrTimeoutCount: 0,
+        lastAdjustmentReason:
+          currentTier === 7
+            ? `Running at maximum 7x Turbo Batch (rolling latency ${nextRollingLatency}ms).`
+            : `Portal fast (${nextRollingLatency}ms avg) — ${nextFastStreak}/2 fast samples toward next speed tier.`,
+        regime: getRegimeForConcurrency(currentTier),
+      },
+      changed: false,
+    };
+  }
+
+  // 3. Moderate latency (1,000ms - 3,199ms): maintain current concurrency steady state
+  return {
+    nextConfig: currentConfig,
+    nextTelemetry: {
+      ...telemetry,
+      autoTuneEnabled: true,
+      currentConcurrency: currentTier,
+      rollingLatencyMs: nextRollingLatency,
+      lastLatencyMs: clampedLatency,
+      sampleCount: telemetry.sampleCount + 1,
+      consecutiveFastCount: 0,
+      consecutiveSlowOrTimeoutCount: 0,
+      lastAdjustmentReason: `Steady at ${currentTier}x concurrency (rolling latency ${nextRollingLatency}ms).`,
+      regime: getRegimeForConcurrency(currentTier),
+    },
+    changed: false,
+  };
+}
+
+export interface LatencyTrendPoint {
+  sequenceIndex: number; // 1..N (up to 50)
+  taskId: string;
+  mouzaJlNo: string;
+  mouzaNameEn: string;
+  mouzaNameBn: string;
+  surveyType: string;
+  latencyMs: number;
+  averageLatencyMs: number;
+  httpStatus: number;
+  status: string;
+  updatedAt: string;
+}
+
+/**
+ * Extracts up to the last `maxTasks` (default 50) executed tasks with valid latency measurements,
+ * ordered chronologically by execution (`updatedAt`), and computes the running Average Fetch Latency (ms)
+ * (EMA + cumulative window average) for D3.js trend visualization.
+ */
+export function computeLatencyTrendWindow(
+  tasks: QueueTask[],
+  maxTasks = 50
+): {
+  points: LatencyTrendPoint[];
+  overallAverageMs: number;
+  minLatencyMs: number;
+  maxLatencyMs: number;
+  fastCount: number;
+  slowOrTimeoutCount: number;
+  trendDirection: 'IMPROVING' | 'STABLE' | 'DEGRADING' | 'AWAITING_DATA';
+} {
+  const measuredTasks = tasks
+    .filter((t) => typeof t.latencyMs === 'number' && t.latencyMs > 0)
+    .slice()
+    .sort((a, b) => {
+      const timeA = Date.parse(a.updatedAt || a.createdAt || '') || 0;
+      const timeB = Date.parse(b.updatedAt || b.createdAt || '') || 0;
+      return timeA - timeB;
+    });
+
+  const windowTasks = measuredTasks.slice(-Math.max(1, maxTasks));
+
+  if (windowTasks.length === 0) {
+    return {
+      points: [],
+      overallAverageMs: 0,
+      minLatencyMs: 0,
+      maxLatencyMs: 0,
+      fastCount: 0,
+      slowOrTimeoutCount: 0,
+      trendDirection: 'AWAITING_DATA',
+    };
+  }
+
+  let rollingAvg = 0;
+  let sumLatency = 0;
+  let minLatencyMs = Infinity;
+  let maxLatencyMs = 0;
+  let fastCount = 0;
+  let slowOrTimeoutCount = 0;
+
+  const points: LatencyTrendPoint[] = windowTasks.map((t, idx) => {
+    const rawLatency = Math.max(1, Math.round(t.latencyMs || 0));
+    rollingAvg =
+      idx === 0 ? rawLatency : Math.round(rollingAvg * 0.65 + rawLatency * 0.35);
+    sumLatency += rawLatency;
+    if (rawLatency < minLatencyMs) minLatencyMs = rawLatency;
+    if (rawLatency > maxLatencyMs) maxLatencyMs = rawLatency;
+    if (rawLatency <= 1000) fastCount += 1;
+    if (rawLatency >= 2800 || (t.httpStatus ?? 200) === 0 || (t.httpStatus ?? 200) >= 429) {
+      slowOrTimeoutCount += 1;
+    }
+
+    return {
+      sequenceIndex: idx + 1,
+      taskId: t.id,
+      mouzaJlNo: t.mouzaJlNo,
+      mouzaNameEn: t.mouzaNameEn,
+      mouzaNameBn: t.mouzaNameBn,
+      surveyType: t.surveyType,
+      latencyMs: rawLatency,
+      averageLatencyMs: rollingAvg,
+      httpStatus: t.httpStatus ?? 200,
+      status: t.status,
+      updatedAt: t.updatedAt,
+    };
+  });
+
+  const overallAverageMs = Math.round(sumLatency / points.length);
+
+  let trendDirection: 'IMPROVING' | 'STABLE' | 'DEGRADING' | 'AWAITING_DATA' = 'STABLE';
+  if (points.length >= 4) {
+    const half = Math.floor(points.length / 2);
+    const firstHalfAvg =
+      points.slice(0, half).reduce((acc, p) => acc + p.latencyMs, 0) / half;
+    const secondHalfAvg =
+      points.slice(half).reduce((acc, p) => acc + p.latencyMs, 0) /
+      (points.length - half);
+    const deltaRatio = (secondHalfAvg - firstHalfAvg) / Math.max(1, firstHalfAvg);
+    if (deltaRatio <= -0.15) {
+      trendDirection = 'IMPROVING';
+    } else if (deltaRatio >= 0.15) {
+      trendDirection = 'DEGRADING';
+    }
+  }
+
+  return {
+    points,
+    overallAverageMs,
+    minLatencyMs: minLatencyMs === Infinity ? 0 : minLatencyMs,
+    maxLatencyMs,
+    fastCount,
+    slowOrTimeoutCount,
+    trendDirection,
+  };
+}
+
+export function createInitialSmartPauseState(): SmartPauseMonitorState {
+  return {
+    consecutiveTimeouts: 0,
+    highLatencyStartedAtMs: null,
+    sustainedHighLatencyElapsedMs: 0,
+    isTriggered: false,
+    triggerReason: null,
+    triggerMessage: null,
+    triggeredAtIso: null,
+    queueAutoSuspended: false,
+  };
+}
+
+export function formatSmartPauseDuration(durationMs: number): string {
+  const totalSec = Math.max(0, Math.floor(durationMs / 1000));
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  return `${mins}m ${String(secs).padStart(2, '0')}s`;
+}
+
+/**
+ * Smart Pause Portal Health Monitor:
+ * Evaluates each task completion sample and triggers a notification or automatically
+ * suspends the queue when either:
+ * 1) `consecutiveTimeouts >= config.consecutiveTimeoutsThreshold` (default: 3 consecutive timeouts)
+ * 2) A sustained latency spike exceeding `config.sustainedLatencyThresholdMs` (default: > 3,000ms)
+ *    persists continuously for more than `config.sustainedDurationMinutes` (default: > 5 minutes).
+ */
+export function evaluateSmartPauseStep(params: {
+  config: SmartPauseConfig;
+  currentState: SmartPauseMonitorState;
+  sample: {
+    latencyMs: number;
+    httpStatus: number;
+    timedOut?: boolean;
+    timestampMs?: number;
+  };
+}): {
+  nextState: SmartPauseMonitorState;
+  newlyTriggered: boolean;
+  shouldSuspendQueue: boolean;
+} {
+  const { config, currentState, sample } = params;
+  const nowMs = sample.timestampMs ?? Date.now();
+  const clampedLatency = Math.max(1, Math.round(sample.latencyMs));
+
+  const isTimeout =
+    Boolean(sample.timedOut) ||
+    sample.httpStatus === 0 ||
+    sample.httpStatus === 408 ||
+    sample.httpStatus === 504;
+
+  const isHighLatency = clampedLatency > config.sustainedLatencyThresholdMs;
+
+  const nextConsecutiveTimeouts = isTimeout
+    ? currentState.consecutiveTimeouts + 1
+    : 0;
+
+  let nextHighLatencyStartedAtMs: number | null =
+    currentState.highLatencyStartedAtMs;
+  let nextSustainedElapsedMs = 0;
+
+  if (isHighLatency || isTimeout) {
+    if (nextHighLatencyStartedAtMs === null) {
+      nextHighLatencyStartedAtMs = nowMs;
+      nextSustainedElapsedMs = 0;
+    } else {
+      nextSustainedElapsedMs = Math.max(0, nowMs - nextHighLatencyStartedAtMs);
+    }
+  } else {
+    nextHighLatencyStartedAtMs = null;
+    nextSustainedElapsedMs = 0;
+  }
+
+  if (!config.enabled) {
+    return {
+      nextState: {
+        ...currentState,
+        consecutiveTimeouts: nextConsecutiveTimeouts,
+        highLatencyStartedAtMs: nextHighLatencyStartedAtMs,
+        sustainedHighLatencyElapsedMs: nextSustainedElapsedMs,
+      },
+      newlyTriggered: false,
+      shouldSuspendQueue: false,
+    };
+  }
+
+  const timeoutThreshold = Math.max(1, config.consecutiveTimeoutsThreshold || 3);
+  const sustainedThresholdMs =
+    Math.max(1, config.sustainedDurationMinutes || 5) * 60 * 1000;
+
+  const hitConsecutiveTimeouts = nextConsecutiveTimeouts >= timeoutThreshold;
+  const hitSustainedSpike = nextSustainedElapsedMs > sustainedThresholdMs;
+
+  if (hitConsecutiveTimeouts || hitSustainedSpike) {
+    const triggerReason = hitConsecutiveTimeouts
+      ? 'CONSECUTIVE_TIMEOUTS'
+      : 'SUSTAINED_LATENCY_SPIKE';
+    const shouldSuspendQueue = config.actionMode === 'AUTO_SUSPEND_AND_NOTIFY';
+
+    const actionSuffix = shouldSuspendQueue
+      ? 'Queue automatically suspended to protect session stability.'
+      : 'Notification alert triggered (queue continuing in Notify-Only mode).';
+
+    const triggerMessage = hitConsecutiveTimeouts
+      ? `Smart Pause Triggered: Portal health monitor detected ${nextConsecutiveTimeouts} consecutive timeouts (threshold: ${timeoutThreshold}). ${actionSuffix}`
+      : `Smart Pause Triggered: Sustained portal latency spike > ${config.sustainedLatencyThresholdMs}ms (${clampedLatency}ms latest) persisted for ${formatSmartPauseDuration(nextSustainedElapsedMs)} (> ${config.sustainedDurationMinutes}m limit). ${actionSuffix}`;
+
+    return {
+      nextState: {
+        consecutiveTimeouts: nextConsecutiveTimeouts,
+        highLatencyStartedAtMs: nextHighLatencyStartedAtMs,
+        sustainedHighLatencyElapsedMs: nextSustainedElapsedMs,
+        isTriggered: true,
+        triggerReason,
+        triggerMessage,
+        triggeredAtIso: new Date(nowMs).toISOString(),
+        queueAutoSuspended: shouldSuspendQueue,
+      },
+      newlyTriggered: !currentState.isTriggered,
+      shouldSuspendQueue,
+    };
+  }
+
+  return {
+    nextState: {
+      ...currentState,
+      consecutiveTimeouts: nextConsecutiveTimeouts,
+      highLatencyStartedAtMs: nextHighLatencyStartedAtMs,
+      sustainedHighLatencyElapsedMs: nextSustainedElapsedMs,
+    },
+    newlyTriggered: false,
+    shouldSuspendQueue: false,
+  };
+}
+
+
+
 
 
 

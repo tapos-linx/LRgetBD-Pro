@@ -23,33 +23,63 @@ import {
   Square,
   Trash2,
 } from 'lucide-react';
-import { ProxyConfig, QueueTask, TransportMode } from '../types/land';
+import {
+  ConcurrencyTunerTelemetry,
+  ProxyConfig,
+  QueueTask,
+  SmartPauseActionMode,
+  SmartPauseConfig,
+  SmartPauseMonitorState,
+  SmartSchedulerConfig,
+  TransportMode,
+  WorkWindowEvaluation,
+} from '../types/land';
 import {
   computeDocumentTypeSizeStats,
   evaluateTaskSizeIntegrity,
+  formatSmartPauseDuration,
+  getJitterBoundsForConcurrency,
 } from '../services/queueEngine';
+import { SmartBatchScheduler } from './SmartBatchScheduler';
+import { LatencyTrendChart } from './LatencyTrendChart';
 
 interface QueueConsoleViewProps {
   tasks: QueueTask[];
-  isRunning: boolean;
+  isRunning?: boolean;
+  isQueueRunning?: boolean;
   activeTaskId: string | null;
   proxyConfig: ProxyConfig;
   onUpdateProxyConfig: (next: ProxyConfig) => void;
-  onStartQueue: () => void;
-  onPauseQueue: () => void;
+  concurrencyTelemetry?: ConcurrencyTunerTelemetry;
+  onStartQueue?: () => void;
+  onPauseQueue?: () => void;
+  onToggleQueue?: () => void;
   onRunSingleTask: (taskId: string) => void;
   onRetryFailed: () => void;
   onClearQueue: () => void;
   onBundleZip: () => Promise<void>;
-  onExportCsv: () => void;
+  onExportCsv?: () => void;
+  onExportAuditCsv?: () => void;
   onDownloadIndividual?: (task: QueueTask) => void;
+  onDownloadTask?: (task: QueueTask) => void;
   onOpenBatchRenameModal?: () => void;
+  onBatchRename?: () => void;
   onReorderTasks?: (sourceTaskId: string, targetTaskId: string) => void;
   onMoveTaskPriority?: (taskId: string, direction: 'UP' | 'DOWN' | 'TOP') => void;
   onPrioritizeMouza?: (mouzaId: string) => void;
   onBulkAction?: (taskIds: string[], action: 'FORCE_FETCH' | 'DELETE' | 'MOVE_TO_TOP') => void;
+  verifiedBlobTaskIds?: Set<string>;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
+  schedulerConfig?: SmartSchedulerConfig;
+  schedulerEvaluation?: WorkWindowEvaluation;
+  onUpdateSchedulerConfig?: (next: SmartSchedulerConfig) => void;
+  manualOverrideActive?: boolean;
+  onToggleManualOverride?: () => void;
+  smartPauseConfig?: SmartPauseConfig;
+  smartPauseState?: SmartPauseMonitorState;
+  onUpdateSmartPauseConfig?: (next: SmartPauseConfig) => void;
+  onDismissOrResumeSmartPause?: (resumeQueue: boolean) => void;
 }
 
 const TRANSPORT_LABELS: Record<TransportMode, string> = {
@@ -64,25 +94,47 @@ const TRANSPORT_LABELS: Record<TransportMode, string> = {
 export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   tasks,
   isRunning,
+  isQueueRunning,
   activeTaskId,
   proxyConfig,
   onUpdateProxyConfig,
+  concurrencyTelemetry,
   onStartQueue,
   onPauseQueue,
+  onToggleQueue,
   onRunSingleTask,
   onRetryFailed,
   onClearQueue,
   onBundleZip,
   onExportCsv,
+  onExportAuditCsv,
   onDownloadIndividual,
+  onDownloadTask,
   onOpenBatchRenameModal,
+  onBatchRename,
   onReorderTasks,
   onMoveTaskPriority,
   onPrioritizeMouza,
   onBulkAction,
   isBundlingZip,
   lastBundleStatus,
+  schedulerConfig,
+  schedulerEvaluation,
+  onUpdateSchedulerConfig,
+  manualOverrideActive = false,
+  onToggleManualOverride,
+  smartPauseConfig,
+  smartPauseState,
+  onUpdateSmartPauseConfig,
+  onDismissOrResumeSmartPause,
 }) => {
+  const effectiveIsRunning = isRunning ?? isQueueRunning ?? false;
+  const handleStart = onStartQueue ?? onToggleQueue ?? (() => {});
+  const handlePause = onPauseQueue ?? onToggleQueue ?? (() => {});
+  const handleExportCsv = onExportCsv ?? onExportAuditCsv ?? (() => {});
+  const handleDownloadSingle = onDownloadIndividual ?? onDownloadTask;
+  const handleBatchRenameModal = onOpenBatchRenameModal ?? onBatchRename;
+
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverTaskId, setDragOverTaskId] = useState<string | null>(null);
@@ -186,12 +238,17 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
       t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH' ||
       t.status === 'FAILED_RETRY'
   ).length;
+  const permanentFailureCount = tasks.filter(
+    (t) => t.status === 'PERMANENT_FAILURE'
+  ).length;
 
   const filteredTasks = tasks.filter((t) => {
     if (statusFilter === 'ALL') return true;
     if (statusFilter === 'VERIFIED') return t.pdfVerified;
     if (statusFilter === 'QUEUED') return t.status === 'QUEUED';
     if (statusFilter === 'INDEX') return t.status === 'HTML_INDEX_EXTRACTED';
+    if (statusFilter === 'PERMANENT_FAILURE')
+      return t.status === 'PERMANENT_FAILURE';
     if (statusFilter === 'INTEGRITY_FLAGGED') {
       const check = taskIntegrityMap.get(t.id);
       return (
@@ -210,6 +267,19 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Smart Batch Scheduler (Off-Peak Work Window e.g. 2 AM - 6 AM) */}
+      {schedulerConfig && schedulerEvaluation && onUpdateSchedulerConfig && (
+        <SmartBatchScheduler
+          config={schedulerConfig}
+          evaluation={schedulerEvaluation}
+          onChangeConfig={onUpdateSchedulerConfig}
+          isQueueRunning={effectiveIsRunning}
+          manualOverrideActive={manualOverrideActive}
+          onToggleManualOverride={onToggleManualOverride ?? (() => {})}
+          queuedCount={queuedCount}
+        />
+      )}
+
       {/* Transport & Polite Queue Engine Controls */}
       <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -223,10 +293,10 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            {!isRunning ? (
+            {!effectiveIsRunning ? (
               <button
                 type="button"
-                onClick={onStartQueue}
+                onClick={handleStart}
                 disabled={queuedCount === 0}
                 className="px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
@@ -236,7 +306,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             ) : (
               <button
                 type="button"
-                onClick={onPauseQueue}
+                onClick={handlePause}
                 className="px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Pause className="w-4 h-4" />
@@ -247,7 +317,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             <button
               type="button"
               onClick={onRetryFailed}
-              disabled={failedOrBlockedCount === 0 || isRunning}
+              disabled={failedOrBlockedCount === 0 || effectiveIsRunning}
               title="Iterates through all FAILED_RETRY, CORS_BRIDGE_REQUIRED, and NOT_AVAILABLE tasks and resets them to QUEUED with incremented retry count"
               className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
@@ -257,7 +327,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
 
             <button
               type="button"
-              onClick={onExportCsv}
+              onClick={handleExportCsv}
               disabled={tasks.length === 0}
               className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
@@ -265,10 +335,10 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               <span>Export CSV</span>
             </button>
 
-            {onOpenBatchRenameModal && (
+            {handleBatchRenameModal && (
               <button
                 type="button"
-                onClick={onOpenBatchRenameModal}
+                onClick={handleBatchRenameModal}
                 disabled={tasks.length === 0}
                 title="Apply a regex-based or token template naming pattern to downloaded PDFs in lr_verified_blobs"
                 className="px-3.5 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
@@ -295,7 +365,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
             <button
               type="button"
               onClick={onClearQueue}
-              disabled={tasks.length === 0 || isRunning}
+              disabled={tasks.length === 0 || effectiveIsRunning}
               className="px-3 py-2.5 rounded-lg bg-slate-800 hover:bg-red-950/60 hover:text-red-300 disabled:opacity-40 text-slate-400 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
             >
               <Trash2 className="w-3.5 h-3.5" />
@@ -384,29 +454,348 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
           )}
 
           <div>
-            <label
-              htmlFor="concurrency-select"
-              className="block text-xs font-medium text-slate-400 mb-1.5"
-            >
-              Polite Queue Concurrency & Jitter
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label
+                htmlFor="concurrency-select"
+                className="block text-xs font-medium text-slate-400"
+              >
+                Queue Concurrency &amp; Auto-Tuner
+              </label>
+              <button
+                type="button"
+                data-testid="toggle-auto-concurrency-btn"
+                onClick={() =>
+                  onUpdateProxyConfig({
+                    ...proxyConfig,
+                    autoTuneConcurrency: !(proxyConfig.autoTuneConcurrency ?? true),
+                  })
+                }
+                className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                  proxyConfig.autoTuneConcurrency ?? true
+                    ? 'bg-emerald-500/20 border border-emerald-500/50 text-emerald-300'
+                    : 'bg-slate-800 border border-slate-700 text-slate-400'
+                }`}
+              >
+                {proxyConfig.autoTuneConcurrency ?? true
+                  ? 'Auto-Tuner: ON (AIMD)'
+                  : 'Manual Lock'}
+              </button>
+            </div>
             <select
               id="concurrency-select"
               value={proxyConfig.concurrency}
-              onChange={(e) =>
+              onChange={(e) => {
+                const nextTier = Number(e.target.value) as 1 | 2 | 3 | 7;
+                const jitter = getJitterBoundsForConcurrency(nextTier);
                 onUpdateProxyConfig({
                   ...proxyConfig,
-                  concurrency: Number(e.target.value) as 1 | 2 | 3,
-                })
-              }
+                  concurrency: nextTier,
+                  minDelayMs: jitter.minDelayMs,
+                  maxDelayMs: jitter.maxDelayMs,
+                });
+              }}
               className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
             >
-              <option value={1}>1 Parallel Request · 450ms–900ms Jitter (Safest)</option>
-              <option value={2}>2 Parallel Requests · 450ms–900ms Jitter (Balanced)</option>
-              <option value={3}>3 Parallel Requests · 450ms–900ms Jitter (Maximum)</option>
+              <option value={1}>1 Parallel Request · Sequential Backoff (450–850ms)</option>
+              <option value={2}>2 Parallel Requests · Balanced (220–420ms)</option>
+              <option value={3}>3 Parallel Requests · Fast Default (120–250ms)</option>
+              <option value={7}>7 Parallel Requests · 7-Mouza Turbo Batch (80–180ms)</option>
             </select>
           </div>
         </div>
+
+        {/* Automated Concurrency Tuner (AIMD) Live Telemetry Bar */}
+        {concurrencyTelemetry && (
+          <div
+            data-testid="concurrency-tuner-telemetry"
+            className="p-3.5 rounded-xl bg-slate-950 border border-slate-800/90 flex flex-col lg:flex-row lg:items-center justify-between gap-3"
+          >
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold font-mono-tabular uppercase tracking-wider border ${
+                  concurrencyTelemetry.currentConcurrency === 7
+                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                    : concurrencyTelemetry.currentConcurrency === 3
+                    ? 'bg-sky-500/20 border-sky-500/40 text-sky-300'
+                    : concurrencyTelemetry.currentConcurrency === 2
+                    ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
+                    : 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                }`}
+              >
+                {concurrencyTelemetry.regime.replace(/_/g, ' ')} ·{' '}
+                {proxyConfig.concurrency}x Workers
+              </span>
+              <span className="text-xs text-slate-300 font-medium">
+                {concurrencyTelemetry.lastAdjustmentReason}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono-tabular text-slate-400 shrink-0">
+              <div>
+                <span>Rolling Avg: </span>
+                <span
+                  className={`font-bold ${
+                    concurrencyTelemetry.rollingLatencyMs === 0
+                      ? 'text-slate-300'
+                      : concurrencyTelemetry.rollingLatencyMs <= 1000
+                      ? 'text-emerald-400'
+                      : concurrencyTelemetry.rollingLatencyMs >= 2800
+                      ? 'text-rose-400'
+                      : 'text-amber-300'
+                  }`}
+                >
+                  {concurrencyTelemetry.rollingLatencyMs > 0
+                    ? `${concurrencyTelemetry.rollingLatencyMs}ms`
+                    : '—'}
+                </span>
+              </div>
+              <span aria-hidden="true">·</span>
+              <div>
+                <span>Last: </span>
+                <span className="text-slate-200 font-semibold">
+                  {concurrencyTelemetry.lastLatencyMs > 0
+                    ? `${concurrencyTelemetry.lastLatencyMs}ms`
+                    : '—'}
+                </span>
+              </div>
+              <span aria-hidden="true">·</span>
+              <div>
+                <span>Jitter: </span>
+                <span className="text-slate-200">
+                  {proxyConfig.minDelayMs}–{proxyConfig.maxDelayMs}ms
+                </span>
+              </div>
+              <span aria-hidden="true">·</span>
+              <div className="text-emerald-400">
+                +{concurrencyTelemetry.totalScaleUps} Up
+              </div>
+              <div className="text-amber-400">
+                -{concurrencyTelemetry.totalBackoffs} Down
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Smart Pause Portal Health Monitor & Triggered Notification Banner */}
+        {smartPauseConfig && smartPauseState && (
+          <div
+            data-testid="smart-pause-panel"
+            className={`p-3.5 rounded-xl border transition-colors space-y-2.5 ${
+              smartPauseState.isTriggered
+                ? 'bg-rose-950/45 border-rose-500/60'
+                : 'bg-slate-950 border-slate-800/90'
+            }`}
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold font-mono-tabular uppercase tracking-wider border flex items-center gap-1.5 ${
+                    !smartPauseConfig.enabled
+                      ? 'bg-slate-800 border-slate-700 text-slate-400'
+                      : smartPauseState.isTriggered
+                      ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
+                      : smartPauseState.consecutiveTimeouts > 0 ||
+                        smartPauseState.sustainedHighLatencyElapsedMs > 0
+                      ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                      : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  }`}
+                >
+                  <ShieldAlert className="w-3 h-3" />
+                  <span>
+                    {!smartPauseConfig.enabled
+                      ? 'Smart Pause: OFF'
+                      : smartPauseState.isTriggered
+                      ? 'Smart Pause: TRIGGERED'
+                      : 'Smart Pause Guard: ARMED'}
+                  </span>
+                </span>
+                <span className="text-xs text-slate-300 font-medium">
+                  Auto-suspends or notifies on {smartPauseConfig.consecutiveTimeoutsThreshold} consecutive timeouts or sustained &gt;{smartPauseConfig.sustainedLatencyThresholdMs}ms latency for &gt;{smartPauseConfig.sustainedDurationMinutes}m
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono-tabular shrink-0">
+                <div>
+                  <span className="text-slate-400">Timeouts: </span>
+                  <span
+                    data-testid="smart-pause-timeout-counter"
+                    className={`font-bold ${
+                      smartPauseState.consecutiveTimeouts >=
+                      smartPauseConfig.consecutiveTimeoutsThreshold
+                        ? 'text-rose-400'
+                        : smartPauseState.consecutiveTimeouts > 0
+                        ? 'text-amber-300'
+                        : 'text-emerald-400'
+                    }`}
+                  >
+                    {smartPauseState.consecutiveTimeouts}/
+                    {smartPauseConfig.consecutiveTimeoutsThreshold}
+                  </span>
+                </div>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <div>
+                  <span className="text-slate-400">
+                    &gt;{smartPauseConfig.sustainedLatencyThresholdMs}ms Spike:{' '}
+                  </span>
+                  <span
+                    data-testid="smart-pause-spike-timer"
+                    className={`font-bold ${
+                      smartPauseState.sustainedHighLatencyElapsedMs >
+                      smartPauseConfig.sustainedDurationMinutes * 60 * 1000
+                        ? 'text-rose-400'
+                        : smartPauseState.sustainedHighLatencyElapsedMs > 0
+                        ? 'text-amber-300'
+                        : 'text-slate-200'
+                    }`}
+                  >
+                    {formatSmartPauseDuration(
+                      smartPauseState.sustainedHighLatencyElapsedMs
+                    )}{' '}
+                    / {smartPauseConfig.sustainedDurationMinutes}m 00s
+                  </span>
+                </div>
+                <span aria-hidden="true" className="text-slate-600">
+                  ·
+                </span>
+                <div>
+                  <span className="text-slate-400">Perm. Failures: </span>
+                  <span
+                    data-testid="smart-pause-permanent-failure-count"
+                    className={`font-bold ${
+                      permanentFailureCount > 0
+                        ? 'text-rose-400'
+                        : 'text-slate-300'
+                    }`}
+                  >
+                    {permanentFailureCount}
+                  </span>
+                </div>
+
+                {onUpdateSmartPauseConfig && (
+                  <div className="flex items-center gap-1.5">
+                    <label
+                      htmlFor="smart-pause-retry-budget-select"
+                      className="text-slate-400"
+                    >
+                      Retry Budget:
+                    </label>
+                    <select
+                      id="smart-pause-retry-budget-select"
+                      aria-label="Automatic Retry Budget per Task"
+                      data-testid="smart-pause-retry-budget-select"
+                      value={smartPauseConfig.maxTaskRetryBudget || 3}
+                      onChange={(e) =>
+                        onUpdateSmartPauseConfig({
+                          ...smartPauseConfig,
+                          maxTaskRetryBudget: Math.max(
+                            1,
+                            Number(e.target.value) || 3
+                          ),
+                        })
+                      }
+                      className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500"
+                    >
+                      <option value={1}>1 Retry → Perm. Failure</option>
+                      <option value={2}>2 Retries → Perm. Failure</option>
+                      <option value={3}>3 Retries (Default)</option>
+                      <option value={5}>5 Retries → Perm. Failure</option>
+                      <option value={10}>10 Retries → Perm. Failure</option>
+                    </select>
+                  </div>
+                )}
+
+                {onUpdateSmartPauseConfig && (
+                  <select
+                    aria-label="Smart Pause Action Mode"
+                    data-testid="smart-pause-mode-select"
+                    value={
+                      !smartPauseConfig.enabled
+                        ? 'DISABLED'
+                        : smartPauseConfig.actionMode
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'DISABLED') {
+                        onUpdateSmartPauseConfig({
+                          ...smartPauseConfig,
+                          enabled: false,
+                        });
+                      } else {
+                        onUpdateSmartPauseConfig({
+                          ...smartPauseConfig,
+                          enabled: true,
+                          actionMode: val as SmartPauseActionMode,
+                        });
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-[11px] text-slate-200 focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="AUTO_SUSPEND_AND_NOTIFY">
+                      Auto-Suspend Queue + Notify
+                    </option>
+                    <option value="NOTIFY_ONLY">
+                      Notify Only (Keep Running)
+                    </option>
+                    <option value="DISABLED">Smart Pause Disabled</option>
+                  </select>
+                )}
+              </div>
+            </div>
+
+            {smartPauseState.isTriggered && (
+              <div
+                data-testid="smart-pause-alert-banner"
+                role="alert"
+                className="p-3 rounded-lg bg-rose-950/80 border border-rose-500/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-rose-200">
+                      {smartPauseState.triggerReason === 'CONSECUTIVE_TIMEOUTS'
+                        ? 'Portal Health Alert: 3+ Consecutive Timeouts Detected'
+                        : 'Portal Health Alert: Sustained Latency Spike (>3,000ms for >5 Minutes)'}
+                    </div>
+                    <p className="text-[11px] text-rose-100/90 mt-0.5">
+                      {smartPauseState.triggerMessage}
+                    </p>
+                  </div>
+                </div>
+
+                {onDismissOrResumeSmartPause && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      data-testid="smart-pause-resume-btn"
+                      onClick={() => onDismissOrResumeSmartPause(true)}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      <span>Resume Queue &amp; Reset</span>
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="smart-pause-dismiss-btn"
+                      onClick={() => onDismissOrResumeSmartPause(false)}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-rose-500/40 text-rose-200 text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      Dismiss Alert
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* D3.js Line Chart: Average Fetch Latency (ms) over Last 50 Tasks */}
+        <LatencyTrendChart
+          tasks={tasks}
+          concurrencyTelemetry={concurrencyTelemetry}
+          maxTasks={50}
+        />
 
         {lastBundleStatus && (
           <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60 text-xs text-emerald-200 flex items-center gap-2">
@@ -429,6 +818,10 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               label: `Integrity Flagged (${integrityFlaggedCount})`,
             },
             { id: 'ATTENTION', label: `Portal HTML / Non-PDF (${failedOrBlockedCount})` },
+            {
+              id: 'PERMANENT_FAILURE',
+              label: `Permanent Failures (${permanentFailureCount})`,
+            },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -734,11 +1127,22 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 align-top">
-                        <div className="font-semibold text-slate-100">
+                        <div className="font-semibold text-slate-100 flex flex-wrap items-center gap-1.5">
                           {isCurrentlyFetching ? (
                             <span className="text-amber-400 flex items-center gap-1.5">
                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                               <span>FETCHING_EPORCHA_TECH</span>
+                            </span>
+                          ) : task.status === 'PERMANENT_FAILURE' ? (
+                            <span
+                              data-testid="permanent-failure-badge"
+                              className="px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[11px] font-bold flex items-center gap-1.5"
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                              <span>
+                                PERMANENT FAILURE (Retry Budget {task.retryCount}/
+                                {smartPauseConfig?.maxTaskRetryBudget ?? 3})
+                              </span>
                             </span>
                           ) : task.pdfVerified ? (
                             <span className="text-emerald-400 flex items-center gap-1.5">
@@ -751,6 +1155,13 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                               <span>{task.status}</span>
                             </span>
                           )}
+                          {task.retryCount > 0 &&
+                            task.status !== 'PERMANENT_FAILURE' && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono-tabular text-amber-300">
+                                Retry {task.retryCount}/
+                                {smartPauseConfig?.maxTaskRetryBudget ?? 3}
+                              </span>
+                            )}
                         </div>
                         {task.errorMessage && (
                           <p className="text-[11px] text-slate-400 mt-1 max-w-md leading-relaxed">
@@ -762,6 +1173,11 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                       <td className="py-3.5 px-4 align-top text-right font-mono-tabular">
                         <div className="text-slate-200">
                           {task.httpStatus ? `HTTP ${task.httpStatus}` : 'Pending'}
+                          {task.latencyMs !== undefined ? (
+                            <span className="ml-1.5 text-[10px] text-emerald-400">
+                              ({task.latencyMs}ms)
+                            </span>
+                          ) : null}
                         </div>
                         <div className="text-[11px] text-slate-400 mt-0.5">
                           {task.magicBytesHex || '—'}
@@ -855,10 +1271,10 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                               <span>Prioritize Mouza</span>
                             </button>
                           )}
-                          {onDownloadIndividual && (task.pdfVerified || (task.byteLength && task.byteLength > 0)) && (
+                          {handleDownloadSingle && (task.pdfVerified || (task.byteLength && task.byteLength > 0)) && (
                             <button
                               type="button"
-                              onClick={() => onDownloadIndividual(task)}
+                              onClick={() => handleDownloadSingle(task)}
                               title={`Download individual ${task.fileName}`}
                               className="px-2.5 py-1.5 rounded-lg bg-emerald-700/80 hover:bg-emerald-600 text-white text-[11px] font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                             >

@@ -48,6 +48,12 @@ function stringToArrayBuffer(str: string): ArrayBuffer {
   return new TextEncoder().encode(str).buffer;
 }
 
+const clientPayloadCache = new Map<
+  string,
+  { status: number; buffer: ArrayBuffer; cachedAt: number }
+>();
+const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
+
 export async function fetchFromEporchaTech(
   task: QueueTask,
   proxyConfig: ProxyConfig
@@ -148,14 +154,30 @@ export async function fetchFromEporchaTech(
     requestUrl = `https://api.scrapfly.io/scrape?key=${apiKey}&url=${encodedTargetUrl}&format=raw&proxy_pool=public_residential_pool`;
   }
 
-
   try {
+    const cached = clientPayloadCache.get(task.targetUrl);
+    if (cached && Date.now() - cached.cachedAt < CLIENT_CACHE_TTL_MS && cached.buffer.byteLength > 0) {
+      const validation = inspectBinaryPayload(cached.buffer, validationContext);
+      return {
+        ok: cached.status >= 200 && cached.status < 300,
+        httpStatus: cached.status,
+        transportUsed: activeTransport,
+        buffer: cached.buffer,
+        validation,
+      };
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8500);
+
     const response = await fetch(requestUrl, {
       method: 'GET',
       headers: {
         Accept: 'application/pdf,application/json,text/html,*/*',
       },
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
 
     const upstreamStatusHeader = response.headers.get('X-Upstream-Status');
     const effectiveStatus = upstreamStatusHeader
@@ -163,6 +185,18 @@ export async function fetchFromEporchaTech(
       : response.status;
 
     const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > 0) {
+      if (clientPayloadCache.size >= 400) {
+        const firstKey = clientPayloadCache.keys().next().value;
+        if (firstKey) clientPayloadCache.delete(firstKey);
+      }
+      clientPayloadCache.set(task.targetUrl, {
+        status: effectiveStatus,
+        buffer,
+        cachedAt: Date.now(),
+      });
+    }
+
     const validation = inspectBinaryPayload(buffer, validationContext);
 
     return {

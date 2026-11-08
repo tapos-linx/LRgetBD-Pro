@@ -86,6 +86,7 @@ async function startServer() {
   // Live GitHub Releases Check for tapos-linx/LR_Mass_Downloader (with optional ?repo=owner/repo override)
   app.get('/api/github-release-check', async (req, res) => {
     const requestedRepo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
+    const isValidSlug = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(requestedRepo);
     const repo = isValidSlug ? requestedRepo : 'tapos-linx/LRgetBD-Pro';
     try {
       const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
@@ -109,6 +110,13 @@ async function startServer() {
       });
     }
   });
+
+  const proxyResponseCache = new Map<
+    string,
+    { status: number; contentType: string; buffer: Buffer; cachedAt: number }
+  >();
+  const PROXY_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+  const MAX_PROXY_CACHE_ENTRIES = 500;
 
   // Authentic Server-Side Relay for https://eporcha.tech (bypasses browser CORS without fabricating any data)
   app.all('/api/eporcha-proxy', async (req, res) => {
@@ -134,12 +142,30 @@ async function startServer() {
       return;
     }
 
+    const normalizedUrl = parsed.toString();
+    const fetchMethod = req.method === 'POST' && req.body?.method ? req.body.method : req.method;
+
+    // Serve from in-memory relay cache if fresh
+    if (fetchMethod !== 'POST') {
+      const cached = proxyResponseCache.get(normalizedUrl);
+      if (cached && Date.now() - cached.cachedAt < PROXY_CACHE_TTL_MS) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('X-Upstream-Status', String(cached.status));
+        res.setHeader('X-Upstream-Content-Type', cached.contentType);
+        res.setHeader('X-Upstream-Url', normalizedUrl);
+        res.setHeader('X-Upstream-Byte-Length', String(cached.buffer.byteLength));
+        res.setHeader('X-Relay-Cache', 'HIT');
+        res.status(cached.status).send(cached.buffer);
+        return;
+      }
+    }
+
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 20000);
+      const timeout = setTimeout(() => controller.abort(), 8000);
 
-      const fetchMethod = req.method === 'POST' && req.body?.method ? req.body.method : req.method;
-      const upstreamResponse = await fetch(parsed.toString(), {
+      const upstreamResponse = await fetch(normalizedUrl, {
         method: fetchMethod === 'POST' ? 'POST' : 'GET',
         headers: {
           'User-Agent':
@@ -149,6 +175,7 @@ async function startServer() {
           'Accept-Language': 'bn-BD,bn;q=0.9,en-US;q=0.8,en;q=0.7',
           Referer: 'https://eporcha.tech/',
           Origin: 'https://eporcha.tech',
+          Connection: 'keep-alive',
         },
         signal: controller.signal,
       });
@@ -158,12 +185,26 @@ async function startServer() {
       const arrayBuffer = await upstreamResponse.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
+      if (fetchMethod !== 'POST' && buffer.byteLength > 0) {
+        if (proxyResponseCache.size >= MAX_PROXY_CACHE_ENTRIES) {
+          const oldestKey = proxyResponseCache.keys().next().value;
+          if (oldestKey) proxyResponseCache.delete(oldestKey);
+        }
+        proxyResponseCache.set(normalizedUrl, {
+          status: upstreamResponse.status,
+          contentType,
+          buffer,
+          cachedAt: Date.now(),
+        });
+      }
+
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Content-Type', contentType);
       res.setHeader('X-Upstream-Status', String(upstreamResponse.status));
       res.setHeader('X-Upstream-Content-Type', contentType);
-      res.setHeader('X-Upstream-Url', parsed.toString());
+      res.setHeader('X-Upstream-Url', normalizedUrl);
       res.setHeader('X-Upstream-Byte-Length', String(buffer.byteLength));
+      res.setHeader('X-Relay-Cache', 'MISS');
 
       res.status(upstreamResponse.status).send(buffer);
     } catch (error) {
@@ -171,7 +212,7 @@ async function startServer() {
       res.status(502).json({
         error: 'EPORCHA_TECH_UPSTREAM_UNREACHABLE',
         message,
-        targetUrl: parsed.toString(),
+        targetUrl: normalizedUrl,
       });
     }
   });

@@ -83,7 +83,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
         {/* Counter and Fast Batch Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono-tabular text-slate-200">
-            {geo.activeUpazila.nameEn}:{' '}
+            {geo.activeUpazila?.nameEn || 'Upazila'}:{' '}
             <span className="text-emerald-400 font-bold">
               {geo.selectedCount}
             </span>
@@ -92,7 +92,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
 
           <button
             type="button"
-            onClick={geo.selectAll100Percent}
+            onClick={geo.selectAllMouzas}
             className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/60 hover:bg-emerald-600/30 text-emerald-300 text-xs font-medium transition-colors whitespace-nowrap shrink-0"
           >
             Select All Mouzas
@@ -115,7 +115,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             <span>Invert</span>
           </button>
 
-          {geo.activeUpazila.id === 'upz-nabinagar' && (
+          {geo.activeUpazila?.id === 'upz-nabinagar' && (
             <button
               type="button"
               onClick={() => geo.selectUnionOnly('20-No Kaitala South Union')}
@@ -162,7 +162,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
           </label>
           <select
             id="division-select-box"
-            value={geo.selectedDivisionId}
+            value={geo.selectedDivisionId || ''}
             onChange={(e) => geo.setSelectedDivisionId(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white font-bn focus:outline-none focus:border-emerald-500"
           >
@@ -179,15 +179,15 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             htmlFor="district-select-box"
             className="block text-xs text-slate-400 mb-1 font-bn"
           >
-            ২. জেলা নির্বাচন করুন (District — {geo.activeDivision.districts.length} Available)
+            ২. জেলা নির্বাচন করুন (District — {geo.districts.length} Available)
           </label>
           <select
             id="district-select-box"
-            value={geo.selectedDistrictId}
+            value={geo.selectedDistrictId || ''}
             onChange={(e) => geo.setSelectedDistrictId(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white font-bn focus:outline-none focus:border-emerald-500"
           >
-            {geo.activeDivision.districts.map((dist) => (
+            {geo.districts.map((dist) => (
               <option key={dist.id} value={dist.id}>
                 {dist.nameBn} ({dist.nameEn}) — {dist.upazilas.length} Upazilas
               </option>
@@ -200,19 +200,24 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
             htmlFor="upazila-select-box"
             className="block text-xs text-emerald-400 font-semibold mb-1 font-bn"
           >
-            ৩. উপজেলা (Upazila in {geo.activeDistrict.nameEn} — {geo.activeDistrict.upazilas.length} Upazilas)
+            ৩. উপজেলা (Upazila in {geo.activeDistrict?.nameEn || 'District'} — {geo.upazilas.length} Upazilas)
           </label>
           <select
             id="upazila-select-box"
-            value={geo.selectedUpazilaId}
+            value={geo.selectedUpazilaId || ''}
             onChange={(e) => geo.setSelectedUpazilaId(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-emerald-500/70 text-xs text-white font-bn focus:outline-none focus:border-emerald-400"
           >
-            {geo.activeDistrict.upazilas.map((upz) => {
-              const customs = (geo.customMouzasByUpazila[upz.id] || []).length;
+            {geo.upazilas.map((upz) => {
+              const isSelected = upz.id === geo.selectedUpazilaId;
+              const countText = isSelected
+                ? ` — Found ${geo.totalMouzasCount} Mouzas in URL (All Selected)`
+                : upz.id === 'upz-nabinagar'
+                ? ` — 176 Mouzas`
+                : '';
               return (
                 <option key={upz.id} value={upz.id}>
-                  {upz.nameBn} ({upz.nameEn}) — Total {upz.mouzas.length + customs} Mouzas
+                  {upz.nameBn} ({upz.nameEn}){countText}
                 </option>
               );
             })}
@@ -254,7 +259,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
           className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3"
         >
           <div className="text-xs font-semibold text-white">
-            Register Custom eporcha.tech Mouza under {geo.activeUpazila.nameEn}
+            Register Custom eporcha.tech Mouza under {geo.activeUpazila?.nameEn || 'Upazila'}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
@@ -410,7 +415,7 @@ export const GeoMouzaSelector: React.FC<GeoMouzaSelectorProps> = ({ geo }) => {
               if (geo.areAllMouzasSelected) {
                 geo.deselectAll();
               } else {
-                geo.selectAll100Percent();
+                geo.selectAllMouzas();
               }
             }}
             className={`relative inline-flex h-7 w-13 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${

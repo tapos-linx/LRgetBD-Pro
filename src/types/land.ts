@@ -68,6 +68,7 @@ export type TaskStatus =
   | 'CORS_BRIDGE_REQUIRED'
   | 'NOT_AVAILABLE_ON_EPORCHA_TECH'
   | 'FAILED_RETRY'
+  | 'PERMANENT_FAILURE'
   | 'PAUSED'
   | 'CANCELLED';
 
@@ -102,6 +103,7 @@ export interface QueueTask {
   targetUrl: string;
   status: TaskStatus;
   httpStatus?: number;
+  latencyMs?: number;
   byteLength?: number;
   magicBytesHex?: string;
   pdfVerified: boolean;
@@ -152,13 +154,79 @@ export interface VerifiedBlobRecord {
   verifiedAt: string;
 }
 
+export type ConcurrencyTier = 1 | 2 | 3 | 7;
+
 export interface ProxyConfig {
   preferredMode: TransportMode;
   termuxProxyUrl: string;
   customCloudflareProxyUrl: string;
-  concurrency: 1 | 2 | 3;
+  concurrency: ConcurrencyTier;
   minDelayMs: number;
   maxDelayMs: number;
+  autoTuneConcurrency?: boolean;
+}
+
+export interface ConcurrencyTunerTelemetry {
+  autoTuneEnabled: boolean;
+  currentConcurrency: ConcurrencyTier;
+  rollingLatencyMs: number;
+  lastLatencyMs: number;
+  sampleCount: number;
+  consecutiveFastCount: number;
+  consecutiveSlowOrTimeoutCount: number;
+  totalScaleUps: number;
+  totalBackoffs: number;
+  lastAdjustmentReason: string;
+  regime: 'TURBO_7X' | 'FAST_3X' | 'BALANCED_2X' | 'SAFE_BACKOFF_1X';
+}
+
+export type SchedulerTimezoneMode = 'BD_STANDARD' | 'LOCAL_SYSTEM';
+
+export interface SmartSchedulerConfig {
+  enabled: boolean;
+  startTime: string; // "HH:mm" e.g. "02:00"
+  endTime: string;   // "HH:mm" e.g. "06:00"
+  timezoneMode: SchedulerTimezoneMode;
+  autoPauseOutsideWindow: boolean;
+  autoRetryFailedOnWindowStart: boolean;
+}
+
+export interface WorkWindowEvaluation {
+  isWithinWindow: boolean;
+  currentTimeHHMM: string;
+  currentTime12h: string;
+  windowLabel12h: string;
+  minutesUntilStart: number;
+  minutesUntilEnd: number;
+  countdownText: string;
+  portalTrafficEstimate: 'OFF_PEAK_OPTIMAL' | 'MODERATE_TRAFFIC' | 'PEAK_PORTAL_LOAD';
+}
+
+export type SmartPauseActionMode = 'AUTO_SUSPEND_AND_NOTIFY' | 'NOTIFY_ONLY';
+
+export type SmartPauseTriggerReason =
+  | 'CONSECUTIVE_TIMEOUTS'
+  | 'SUSTAINED_LATENCY_SPIKE'
+  | null;
+
+export interface SmartPauseConfig {
+  enabled: boolean;
+  actionMode: SmartPauseActionMode;
+  consecutiveTimeoutsThreshold: number;
+  sustainedLatencyThresholdMs: number;
+  sustainedDurationMinutes: number;
+  maxTaskRetryBudget: number;
+}
+
+export interface SmartPauseMonitorState {
+  consecutiveTimeouts: number;
+  highLatencyStartedAtMs: number | null;
+  sustainedHighLatencyElapsedMs: number;
+  isTriggered: boolean;
+  triggerReason: SmartPauseTriggerReason;
+  triggerMessage: string | null;
+  triggeredAtIso: string | null;
+  queueAutoSuspended: boolean;
 }
 
 export interface GithubReleaseAssetInfo {
@@ -176,3 +244,5 @@ export interface GithubReleaseAssetInfo {
   htmlReleaseUrl: string;
   statusMessage: string;
 }
+
+
