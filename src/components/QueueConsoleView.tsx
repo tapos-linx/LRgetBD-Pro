@@ -969,7 +969,14 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                   <th className="py-3 px-3 w-24">Priority / Drag</th>
                   <th className="py-3 px-4">Mouza &amp; Survey</th>
                   <th className="py-3 px-4">Forensic Filename &amp; Mode</th>
-                  <th className="py-3 px-4">Verification Status</th>
+                  <th className="py-3 px-4">
+                    <div className="flex items-center gap-2">
+                      <span>Verification Status</span>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-mono-tabular font-bold text-emerald-400">
+                        {verifiedCount + extractedIndexCount}/{tasks.length} Completed
+                      </span>
+                    </div>
+                  </th>
                   <th className="py-3 px-4 text-right">HTTP &amp; Magic Hex</th>
                   <th className="py-3 px-4 text-right">Size &amp; Integrity Check</th>
                   <th className="py-3 px-4 text-right">Actions</th>

@@ -1269,11 +1269,16 @@ export default function App() {
               </section>
 
               <section className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4 flex flex-col max-h-[700px]">
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <RefreshCw className={`w-4 h-4 text-amber-400 shrink-0 ${isQueueRunning ? 'animate-spin' : ''}`} />
-                    <span>04. Queue Preview & Sequence Control</span>
-                  </h2>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <RefreshCw className={`w-4 h-4 text-amber-400 shrink-0 ${isQueueRunning ? 'animate-spin' : ''}`} />
+                      <span>04. Queue Preview & Sequence Control</span>
+                    </h2>
+                    <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-mono-tabular font-bold text-emerald-400">
+                      {completedOrExtractedCount}/{tasks.length} Completed
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1318,11 +1323,47 @@ export default function App() {
                   className="flex-1 overflow-y-auto pr-1 custom-scrollbar border border-slate-950 rounded-xl bg-slate-950/50"
                 >
                   <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-slate-950 z-10 border-b border-slate-800">
+                    <thead className="sticky top-0 bg-slate-950 z-10 border-b border-slate-800 shadow-sm">
+                      <tr className="border-b border-slate-900 bg-slate-950/95">
+                        <th colSpan={3} className="px-3 py-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-[10px] font-mono-tabular">
+                              <span className="font-bold text-emerald-400">
+                                {completedOrExtractedCount}/{tasks.length} Completed ({queueMetrics.percentage}%)
+                              </span>
+                              <span className="text-slate-600">·</span>
+                              <span className="text-slate-400">
+                                {queueMetrics.queuedCount} Queued
+                              </span>
+                              {queueMetrics.failedCount > 0 && (
+                                <>
+                                  <span className="text-slate-600">·</span>
+                                  <span className="text-rose-400">
+                                    {queueMetrics.failedCount} Failed
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            <div className="w-24 h-1.5 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
+                              <div
+                                className="h-full bg-emerald-500 transition-all duration-300"
+                                style={{ width: `${queueMetrics.percentage}%` }}
+                              />
+                            </div>
+                          </div>
+                        </th>
+                      </tr>
                       <tr>
                         <th className="px-3 py-2.5 text-[10px] font-bold text-slate-500 uppercase">Sequence</th>
                         <th className="px-3 py-2.5 text-[10px] font-bold text-slate-500 uppercase">Target Record</th>
-                        <th className="px-3 py-2.5 text-[10px] font-bold text-slate-500 uppercase">Status</th>
+                        <th className="px-3 py-2.5 text-[10px] font-bold text-slate-500 uppercase">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span>Status</span>
+                            <span className="text-[9px] font-mono-tabular text-emerald-400 font-semibold normal-case">
+                              {completedOrExtractedCount}/{tasks.length} Completed
+                            </span>
+                          </div>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>

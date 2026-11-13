@@ -60,6 +60,19 @@ function formatPortalNameEn(raw: string): string {
 export class GeoDiscoveryService {
   private baseUrl = '/api/eporcha-proxy?url=https://eporcha.tech/api';
 
+  private async safeParseJson(response: Response): Promise<any> {
+    const text = await response.text();
+    const trimmed = text.trim();
+    if (trimmed.startsWith('<') || trimmed.toLowerCase().startsWith('<!doctype')) {
+      throw new Error('Upstream response is HTML instead of JSON');
+    }
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      throw new Error(`Invalid JSON response: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   private findAuthoritativeDivision(divisionId: string) {
     const clean = divisionId.toLowerCase();
     return (
@@ -181,7 +194,7 @@ export class GeoDiscoveryService {
     try {
       const response = await fetch(url);
       if (response.ok) {
-        const raw = await response.json();
+        const raw = await this.safeParseJson(response);
         const rawList = Array.isArray(raw)
           ? raw
           : Array.isArray(raw?.data)
@@ -253,7 +266,7 @@ export class GeoDiscoveryService {
     try {
       const response = await fetch(proxyUrl);
       if (response.ok) {
-        const json = await response.json();
+        const json = await this.safeParseJson(response);
         let rawList: any[] = Array.isArray(json)
           ? json
           : Array.isArray(json?.data)
@@ -388,7 +401,7 @@ export class GeoDiscoveryService {
     try {
       const response = await fetch(proxyUrl);
       if (response.ok) {
-        const json = await response.json();
+        const json = await this.safeParseJson(response);
         const rawList: any[] = Array.isArray(json)
           ? json
           : Array.isArray(json?.data)
@@ -501,7 +514,7 @@ export class GeoDiscoveryService {
     try {
       const response = await fetch(fallbackLegacyUrl);
       if (response.ok) {
-        const raw = await response.json();
+        const raw = await this.safeParseJson(response);
         const list = Array.isArray(raw)
           ? raw
           : Array.isArray(raw?.data)
