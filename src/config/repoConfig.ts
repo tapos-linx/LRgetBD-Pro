@@ -33,27 +33,33 @@ export function buildRepoEndpoints(slug: string = REPO_CONFIG.fullSlug) {
   };
 }
 
-export const GITHUB_ACTIONS_APK_WORKFLOW_YAML = `name: Build, Sign & Release LRgetBD-Pro APK
+export const GITHUB_ACTIONS_APK_WORKFLOW_YAML = `name: Build & Verify LRgetBD-Pro Capacitor Android Debug APK
 
 on:
   push:
     branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-android-apk:
+    name: Build & Verify Android Debug APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+
+      - name: Setup Bun (Matches bun.lock)
+        uses: oven-sh/setup-bun@v2
 
       - name: Setup Java JDK 21 (Temurin)
         uses: actions/setup-java@v4
@@ -61,93 +67,57 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK Command-Line Tools
+        uses: android-actions/setup-android@v4
 
-      - name: Install Dependencies & Run Test Suite
+      - name: Accept Android SDK Licenses & Install Required SDK Packages
         run: |
-          if [ -f "package.json" ]; then
-            npm install --legacy-peer-deps
-            npm test
-          fi
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Build Web Assets & Ensure Native Android Project Exists
+      - name: Setup Gradle Caching
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Install Dependencies, Type-Check & Run Complete Test Suite
         run: |
-          if [ -f "package.json" ]; then
-            npm run build
-            if [ ! -d "android" ] && [ ! -f "gradlew" ]; then
-              npm install @capacitor/core @capacitor/cli @capacitor/android --save-dev --legacy-peer-deps
-              cat << 'EOF' > capacitor.config.json
-              {
-                "appId": "bd.landarchive.lrgetbdpro",
-                "appName": "LRgetBD Pro",
-                "webDir": "dist",
-                "server": {
-                  "androidScheme": "https"
-                },
-                "plugins": {
-                  "CapacitorHttp": {
-                    "enabled": true
-                  }
-                }
-              }
-              EOF
-              npx cap add android
-            fi
-            if [ -d "android" ]; then
-              npx cap sync android
-            fi
-          fi
+          bun install --frozen-lockfile
+          npm run lint
+          npm test
 
-      - name: Grant Gradle Execute Permissions & Build Debug APK
+      - name: Build Production Web Bundle & Sync Capacitor Android Assets
         run: |
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon
-          elif [ -f "android/gradlew" ]; then
-            chmod +x android/gradlew
-            cd android
-            ./gradlew assembleDebug --no-daemon
-          else
-            echo "ERROR: No gradlew found in root or android/ directory!"
-            exit 1
-          fi
+          npm run build
+          npx cap sync android
+          cmp -s dist/index.html android/app/src/main/assets/public/index.html
 
-      - name: Locate Built APK, Verify Integrity (> 1MB) & Copy to LRgetBD-Pro.apk
+      - name: Build Android Debug APK & Run Android Unit Tests
+        working-directory: android
         run: |
-          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
-            APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          elif [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-          else
-            echo "ERROR: app-debug.apk was not generated!"
-            exit 1
-          fi
-          FILE_SIZE=$(stat -c%s "$APK_PATH")
-          if [ "$FILE_SIZE" -lt 1048576 ]; then
-            echo "ERROR: APK file is smaller than 1MB ($FILE_SIZE bytes) - corrupted build!"
-            exit 1
-          fi
-          cp "$APK_PATH" ./LRgetBD-Pro.apk
+          chmod +x ./gradlew
+          ./gradlew --version --no-daemon
+          ./gradlew testDebugUnitTest assembleDebug --no-daemon
 
-      - name: Upload LRgetBD-Pro.apk to Workflow Artifacts
+      - name: Validate Debug APK Identity, Signature & SHA-256
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK_PATH"
+          unzip -tq "$APK_PATH"
+          SDK_ROOT="\${ANDROID_HOME:-\$ANDROID_SDK_ROOT}"
+          BUILD_TOOLS_DIR=\$(ls -d "$SDK_ROOT/build-tools/"* | sort -V | tail -n 1)
+          "$BUILD_TOOLS_DIR/aapt2" dump badging "$APK_PATH" | grep -q "package: name='bd.landarchive.lrgetbdpro'"
+          "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$APK_PATH"
+          cp "$APK_PATH" ./LRgetBD-Pro-debug.apk
+          sha256sum ./LRgetBD-Pro-debug.apk > ./LRgetBD-Pro-debug.apk.sha256
+
+      - name: Upload Verified Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LRgetBD-Pro-APK
-          path: ./LRgetBD-Pro.apk
-
-      - name: Publish LRgetBD-Pro.apk to GitHub Releases (Latest)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.\${{ github.run_number }}
-          name: "LRgetBD Pro v1.0.\${{ github.run_number }} (Production Android APK)"
-          body: |
-            ### LRgetBD Pro — Official Android APK Release (Build #\${{ github.run_number }})
-            * **Direct APK Download:** [\`LRgetBD-Pro.apk\`](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)
-            * **Android Package ID:** \`bd.landarchive.lrgetbdpro\`
-            * **Native CORS Bypass Enabled:** Built with \`CapacitorHttp\` enabled for direct \`https://eporcha.tech\` extraction.
-          files: ./LRgetBD-Pro.apk
-          draft: false
-          prerelease: false
-          make_latest: true
+          name: LRgetBD-Pro-Debug-APK
+          if-no-files-found: error
+          path: |
+            ./LRgetBD-Pro-debug.apk
+            ./LRgetBD-Pro-debug.apk.sha256
+            ./build-metadata.json
 `;

@@ -23,6 +23,148 @@ service cloud.firestore {
       return request.resource.data;
     }
 
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidOptionalString(val, maxLen) {
+      return val == null || (val is string && val.size() <= maxLen);
+    }
+
+    function isUnverifiedCreateState(data) {
+      return data.status == 'UNVERIFIED'
+        && data.isValid == false
+        && data.verificationMethod == null
+        && data.verifiedAt == null;
+    }
+
+    function isUnverifiedGeoRefresh(data) {
+      return data.status == 'UNVERIFIED'
+        && data.isValid == false
+        && data.verificationMethod == null
+        && data.verifiedAt == null;
+    }
+
+    function isExplicitGeoVerification(data) {
+      return data.status == 'VERIFIED'
+        && data.isValid == true
+        && data.verificationMethod is string
+        && data.verificationMethod.size() > 0
+        && data.verificationMethod.size() <= 128
+        && data.verifiedAt is timestamp;
+    }
+
+    function hasValidGeoProvenanceCommon(data) {
+      return data.recordedByUid is string
+        && data.recordedByUid == request.auth.uid
+        && data.recordedByUid.size() <= 128
+        && data.source is string
+        && data.source.size() > 0
+        && data.source.size() <= 120
+        && isValidOptionalString(data.sourceUrl, 512)
+        && data.rawSourceId is string
+        && data.rawSourceId.size() > 0
+        && data.rawSourceId.size() <= 128
+        && data.retrievedAt is timestamp
+        && data.status in ['UNVERIFIED', 'VERIFIED']
+        && data.isValid is bool
+        && (isUnverifiedGeoRefresh(data) || isExplicitGeoVerification(data));
+    }
+
+    function isValidGeoDivision(data, divisionId) {
+      return data.keys().hasAll([
+          'id', 'nameEn', 'nameBn', 'eporchaSlug', 'recordedByUid',
+          'source', 'rawSourceId', 'retrievedAt', 'status', 'isValid'
+        ])
+        && data.keys().hasOnly([
+          'id', 'nameEn', 'nameBn', 'eporchaSlug', 'recordedByUid',
+          'source', 'sourceUrl', 'rawSourceId', 'retrievedAt',
+          'verificationMethod', 'verifiedAt', 'status', 'isValid'
+        ])
+        && data.id is string && data.id == divisionId && data.id.size() <= 128
+        && data.nameEn is string && data.nameEn.size() > 0 && data.nameEn.size() <= 120
+        && data.nameBn is string && data.nameBn.size() > 0 && data.nameBn.size() <= 120
+        && data.eporchaSlug is string && data.eporchaSlug.size() > 0 && data.eporchaSlug.size() <= 120
+        && hasValidGeoProvenanceCommon(data);
+    }
+
+    function isValidGeoDistrict(data, districtId) {
+      return data.keys().hasAll([
+          'id', 'code', 'nameEn', 'nameBn', 'eporchaSlug', 'divisionId', 'parentId',
+          'recordedByUid', 'source', 'rawSourceId', 'retrievedAt', 'status', 'isValid'
+        ])
+        && data.keys().hasOnly([
+          'id', 'code', 'nameEn', 'nameBn', 'eporchaSlug', 'divisionId', 'parentId',
+          'recordedByUid', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt',
+          'verificationMethod', 'verifiedAt', 'status', 'isValid'
+        ])
+        && data.id is string && data.id == districtId && data.id.size() <= 128
+        && data.code is string && data.code.size() <= 32
+        && data.nameEn is string && data.nameEn.size() > 0 && data.nameEn.size() <= 120
+        && data.nameBn is string && data.nameBn.size() > 0 && data.nameBn.size() <= 120
+        && data.eporchaSlug is string && data.eporchaSlug.size() > 0 && data.eporchaSlug.size() <= 120
+        && data.divisionId is string && data.divisionId.size() > 0 && data.divisionId.size() <= 128
+        && data.parentId is string && data.parentId == data.divisionId && data.parentId.size() <= 128
+        && hasValidGeoProvenanceCommon(data);
+    }
+
+    function isValidGeoUpazila(data, upazilaId) {
+      return data.keys().hasAll([
+          'id', 'nameEn', 'nameBn', 'eporchaSlug', 'districtId', 'parentId',
+          'recordedByUid', 'source', 'rawSourceId', 'retrievedAt', 'status', 'isValid'
+        ])
+        && data.keys().hasOnly([
+          'id', 'nameEn', 'nameBn', 'eporchaSlug', 'districtId', 'parentId',
+          'recordedByUid', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt',
+          'verificationMethod', 'verifiedAt', 'status', 'isValid'
+        ])
+        && data.id is string && data.id == upazilaId && data.id.size() <= 128
+        && data.nameEn is string && data.nameEn.size() > 0 && data.nameEn.size() <= 120
+        && data.nameBn is string && data.nameBn.size() > 0 && data.nameBn.size() <= 120
+        && data.eporchaSlug is string && data.eporchaSlug.size() > 0 && data.eporchaSlug.size() <= 120
+        && data.districtId is string && data.districtId.size() > 0 && data.districtId.size() <= 128
+        && data.parentId is string && data.parentId == data.districtId && data.parentId.size() <= 128
+        && hasValidGeoProvenanceCommon(data);
+    }
+
+    function isValidGeoMouza(data, mouzaId) {
+      return data.keys().hasAll([
+          'id', 'jlNo', 'nameEn', 'nameBn', 'upazilaId', 'parentId',
+          'recordedByUid', 'source', 'rawSourceId', 'retrievedAt', 'status', 'isValid'
+        ])
+        && data.keys().hasOnly([
+          'id', 'jlNo', 'nameEn', 'nameBn', 'unionNameEn', 'unionNameBn',
+          'availableSurveys', 'estimatedKhatians', 'estimatedDags', 'mapSheets',
+          'upazilaId', 'parentId', 'recordedByUid', 'source', 'sourceUrl',
+          'rawSourceId', 'retrievedAt', 'verificationMethod', 'verifiedAt', 'status', 'isValid'
+        ])
+        && data.id is string && data.id == mouzaId && data.id.size() <= 128
+        && data.jlNo is string && data.jlNo.size() > 0 && data.jlNo.size() <= 64
+        && data.nameEn is string && data.nameEn.size() > 0 && data.nameEn.size() <= 160
+        && data.nameBn is string && data.nameBn.size() > 0 && data.nameBn.size() <= 160
+        && isValidOptionalString(data.unionNameEn, 160)
+        && isValidOptionalString(data.unionNameBn, 160)
+        && (!('availableSurveys' in data) || (data.availableSurveys is list && data.availableSurveys.size() > 0 && data.availableSurveys.size() <= 5 && data.availableSurveys[0] is string))
+        && (!('estimatedKhatians' in data) || data.estimatedKhatians is number)
+        && (!('estimatedDags' in data) || data.estimatedDags is number)
+        && (!('mapSheets' in data) || (data.mapSheets is list && data.mapSheets.size() > 0 && data.mapSheets.size() <= 50 && data.mapSheets[0] is number))
+        && data.upazilaId is string && data.upazilaId.size() > 0 && data.upazilaId.size() <= 128
+        && data.parentId is string && data.parentId == data.upazilaId && data.parentId.size() <= 128
+        && hasValidGeoProvenanceCommon(data);
+    }
+
+    function isValidGeoQualityLog(data) {
+      return data.keys().hasAll(['recordedByUid', 'originalRecord', 'reason', 'source', 'rejectedAt'])
+        && data.keys().hasOnly(['recordedByUid', 'originalRecord', 'reason', 'source', 'rejectedAt'])
+        && data.recordedByUid is string
+        && data.recordedByUid == request.auth.uid
+        && data.recordedByUid.size() <= 128
+        && data.originalRecord is string && data.originalRecord.size() <= 2000
+        && data.reason is string && data.reason.size() > 0 && data.reason.size() <= 500
+        && data.source is string && data.source.size() > 0 && data.source.size() <= 200
+        && data.rejectedAt is timestamp;
+    }
+
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['uid', 'email'])
         && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoUrl', 'driveConnected', 'driveFolderId', 'updatedAt'])
@@ -91,6 +233,86 @@ service cloud.firestore {
           && incoming().userId == userId;
         allow delete: if isOwner(userId) && isValidId(archiveId);
       }
+    }
+
+    // Normalized Geographic Provenance Collections (owner-scoped per authenticated user)
+    match /divisions/{divisionId} {
+      allow get: if isSignedIn() && isValidId(divisionId) && existing().recordedByUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().recordedByUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(divisionId)
+        && isValidGeoDivision(incoming(), divisionId)
+        && isUnverifiedCreateState(incoming());
+      allow update: if isSignedIn() && isValidId(divisionId)
+        && existing().recordedByUid == request.auth.uid
+        && isValidGeoDivision(incoming(), divisionId)
+        && incoming().recordedByUid == existing().recordedByUid
+        && incoming().id == existing().id
+        && (
+          (isUnverifiedGeoRefresh(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['nameEn', 'nameBn', 'eporchaSlug', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt', 'status', 'isValid', 'verificationMethod', 'verifiedAt'])) ||
+          (isExplicitGeoVerification(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isValid', 'verificationMethod', 'verifiedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /districts/{districtId} {
+      allow get: if isSignedIn() && isValidId(districtId) && existing().recordedByUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().recordedByUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(districtId)
+        && isValidGeoDistrict(incoming(), districtId)
+        && isUnverifiedCreateState(incoming());
+      allow update: if isSignedIn() && isValidId(districtId)
+        && existing().recordedByUid == request.auth.uid
+        && isValidGeoDistrict(incoming(), districtId)
+        && incoming().recordedByUid == existing().recordedByUid
+        && incoming().id == existing().id
+        && (
+          (isUnverifiedGeoRefresh(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['code', 'nameEn', 'nameBn', 'eporchaSlug', 'divisionId', 'parentId', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt', 'status', 'isValid', 'verificationMethod', 'verifiedAt'])) ||
+          (isExplicitGeoVerification(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isValid', 'verificationMethod', 'verifiedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /upazilas/{upazilaId} {
+      allow get: if isSignedIn() && isValidId(upazilaId) && existing().recordedByUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().recordedByUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(upazilaId)
+        && isValidGeoUpazila(incoming(), upazilaId)
+        && isUnverifiedCreateState(incoming());
+      allow update: if isSignedIn() && isValidId(upazilaId)
+        && existing().recordedByUid == request.auth.uid
+        && isValidGeoUpazila(incoming(), upazilaId)
+        && incoming().recordedByUid == existing().recordedByUid
+        && incoming().id == existing().id
+        && (
+          (isUnverifiedGeoRefresh(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['nameEn', 'nameBn', 'eporchaSlug', 'districtId', 'parentId', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt', 'status', 'isValid', 'verificationMethod', 'verifiedAt'])) ||
+          (isExplicitGeoVerification(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isValid', 'verificationMethod', 'verifiedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /mouzas/{mouzaId} {
+      allow get: if isSignedIn() && isValidId(mouzaId) && existing().recordedByUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().recordedByUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(mouzaId)
+        && isValidGeoMouza(incoming(), mouzaId)
+        && isUnverifiedCreateState(incoming());
+      allow update: if isSignedIn() && isValidId(mouzaId)
+        && existing().recordedByUid == request.auth.uid
+        && isValidGeoMouza(incoming(), mouzaId)
+        && incoming().recordedByUid == existing().recordedByUid
+        && incoming().id == existing().id
+        && (
+          (isUnverifiedGeoRefresh(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['jlNo', 'nameEn', 'nameBn', 'unionNameEn', 'unionNameBn', 'availableSurveys', 'estimatedKhatians', 'estimatedDags', 'mapSheets', 'upazilaId', 'parentId', 'source', 'sourceUrl', 'rawSourceId', 'retrievedAt', 'status', 'isValid', 'verificationMethod', 'verifiedAt'])) ||
+          (isExplicitGeoVerification(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'isValid', 'verificationMethod', 'verifiedAt']))
+        );
+      allow delete: if false;
+    }
+
+    match /geographic_data_quality_logs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && existing().recordedByUid == request.auth.uid;
+      allow list: if isSignedIn() && existing().recordedByUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(logId) && isValidGeoQualityLog(incoming());
+      allow update, delete: if false;
     }
   }
 }

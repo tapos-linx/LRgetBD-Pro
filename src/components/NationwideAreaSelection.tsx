@@ -84,20 +84,51 @@ interface NationwideAreaSelectionProps {
 }
 
 export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = ({ geo }) => {
-  
+  const isFailureOrEmpty =
+    geo.geoSourceStatus === 'FAILED' ||
+    geo.geoSourceStatus === 'NOT_FOUND' ||
+    Boolean(geo.discoveryStatus?.includes('No') || geo.discoveryStatus?.includes('Failed'));
+
+  const sourceBadgeLabel =
+    geo.geoSourceStatus === 'LIVE_SOURCE'
+      ? 'Live Portal Source'
+      : geo.geoSourceStatus === 'LOCAL_DATASET'
+      ? 'Local Dataset'
+      : geo.geoSourceStatus === 'FAILED'
+      ? 'Discovery Failed'
+      : geo.geoSourceStatus === 'NOT_FOUND'
+      ? 'Not Found'
+      : 'Ready';
+
   return (
     <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">Nationwide Geographic Selection</h2>
-          <p className="text-[11px] text-slate-400 mt-0.5">Verified Database Discovery (Division → District → Upazila → Mouza)</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Administrative Hierarchy Discovery (Division → District → Upazila → Mouza)
+          </p>
         </div>
-        {geo.isDiscovering && (
-          <div className="flex items-center gap-2 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium">
-            <Loader2 className="w-3 h-3 animate-spin" />
-            Live Discovery Active
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {geo.isDiscovering ? (
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-medium">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Querying Portal
+            </div>
+          ) : (
+            <div
+              className={`px-2.5 py-1 rounded border text-[10px] font-semibold ${
+                geo.geoSourceStatus === 'LIVE_SOURCE'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : geo.geoSourceStatus === 'FAILED' || geo.geoSourceStatus === 'NOT_FOUND'
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  : 'bg-slate-800 border-slate-700 text-slate-300'
+              }`}
+            >
+              {sourceBadgeLabel}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -119,7 +150,7 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
         />
 
         <CascadingDropdown
-          label={`৩. উপজেলা (Upazila — ${geo.upazilas.length} Found in URL)`}
+          label={`৩. উপজেলা (Upazila — ${geo.upazilas.length} Available)`}
           options={geo.upazilas}
           selectedId={geo.selectedUpazilaId}
           onIdSelected={geo.setSelectedUpazilaId}
@@ -130,7 +161,7 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
 
       {geo.discoveryStatus && (
         <div className={`p-3 rounded-lg border flex items-start gap-3 ${
-          geo.discoveryStatus.includes('No') || geo.discoveryStatus.includes('Failed')
+          isFailureOrEmpty
             ? 'bg-amber-500/10 border-amber-500/20 text-amber-200'
             : geo.isDiscovering
             ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300'
@@ -138,15 +169,16 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
         }`}>
           {geo.isDiscovering ? (
             <Loader2 className="w-4 h-4 mt-0.5 shrink-0 animate-spin text-emerald-400" />
-          ) : geo.discoveryStatus.includes('No') || geo.discoveryStatus.includes('Failed') ? (
+          ) : isFailureOrEmpty ? (
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
           ) : (
             <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0 text-emerald-400" />
           )}
           <div className="flex-1">
             <p className="text-xs font-medium">{geo.discoveryStatus}</p>
-            {geo.discoveryStatus.includes('No') && (
-              <button 
+            {isFailureOrEmpty && (
+              <button
+                type="button"
                 onClick={geo.retryDiscovery}
                 className="mt-2 text-[10px] font-bold text-amber-400 flex items-center gap-1 hover:underline"
               >
@@ -163,24 +195,28 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-400 font-bold">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Found in URL: {geo.upazilas.length} Upazilas · {geo.totalMouzasCount} Mouzas</span>
+                <span>
+                  {geo.upazilas.length} Upazilas · {geo.totalMouzasCount} Mouzas ({sourceBadgeLabel})
+                </span>
                 <span className="px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300">
-                  {geo.selectedCount} Mouzas Auto-Selected (100%)
+                  {geo.selectedCount} Selected
                 </span>
               </div>
               <div className="text-[11px] text-slate-400 font-mono-tabular">
-                District: {geo.activeDistrict?.nameEn} ({geo.upazilas.length} Upazilas in Menu) · Upazila: {geo.activeUpazila.nameEn} ({geo.activeUpazila.nameBn}) · All {geo.totalMouzasCount} Mouzas Auto-Selected
+                District: {geo.activeDistrict?.nameEn} ({geo.upazilas.length} Upazilas) · Upazila: {geo.activeUpazila.nameEn} ({geo.activeUpazila.nameBn})
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={geo.deselectAll}
                 className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-[10px] text-slate-400 hover:text-white"
               >
                 Deselect All
               </button>
               <button
+                type="button"
                 onClick={geo.selectAllMouzas}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-[10px] text-emerald-400 font-bold hover:bg-emerald-600/30"
               >
@@ -191,14 +227,14 @@ export const NationwideAreaSelection: React.FC<NationwideAreaSelectionProps> = (
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-900 text-[10px] text-slate-400 font-mono-tabular">
              <div className="flex items-center gap-3">
-                <span className="text-emerald-400 font-semibold">100% Auto-Selected</span>
+                <span className="text-emerald-400 font-semibold">Source: {sourceBadgeLabel}</span>
                 <span>•</span>
                 <span>Portal: eporcha.tech</span>
                 <span>•</span>
                 <span>Upazila: {geo.activeUpazila.nameEn}</span>
              </div>
              <div className="text-slate-500">
-                {geo.selectedCount} of {geo.totalMouzasCount} Mouzas Queued
+                {geo.selectedCount} of {geo.totalMouzasCount} Mouzas Selected
              </div>
           </div>
         </div>

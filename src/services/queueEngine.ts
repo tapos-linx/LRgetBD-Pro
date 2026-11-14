@@ -25,7 +25,7 @@ import {
   WorkWindowEvaluation,
 } from '../types/land';
 import { generateTasksForMouzasAndEndpoints } from '../data/geoHierarchy';
-import { hasPdfMagicSignature, MIN_VALID_PDF_BYTES } from './binaryValidator';
+import { isStructurallyValidPdf, MIN_VALID_PDF_BYTES } from './binaryValidator';
 import { fetchFromEporchaTech } from './eporchaTechClient';
 import {
   getAllVerifiedPdfBlobs,
@@ -34,15 +34,180 @@ import {
 } from './storageService';
 
 /**
- * Implements Phase 7 / Part 8 requirements: Seven-Mouza Download Batching.
- * Splits a list of Mouzas into batches of exactly 7 (except the final batch).
+ * Deduplicates Mouzas by stable ID (or JL number fallback) and splits into batches of 7 unique Mouzas
+ * (with a smaller final remainder permitted).
  */
 export function batchMouzasForQueue(mouzas: MouzaNode[], batchSize: number = 7): MouzaNode[][] {
+  const safeBatchSize = Math.max(1, Math.floor(batchSize));
+  const uniqueMouzas: MouzaNode[] = [];
+  const seen = new Set<string>();
+  for (const m of mouzas) {
+    const key = m.id || `jl-${m.jlNo}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueMouzas.push(m);
+    }
+  }
+
   const batches: MouzaNode[][] = [];
-  for (let i = 0; i < mouzas.length; i += batchSize) {
-    batches.push(mouzas.slice(i, i + batchSize));
+  for (let i = 0; i < uniqueMouzas.length; i += safeBatchSize) {
+    batches.push(uniqueMouzas.slice(i, i + safeBatchSize));
   }
   return batches;
+}
+
+/**
+ * Shared production queue builder that processes unique Mouzas in 7-Mouza batches
+ * within a single Upazila boundary (never mixing Mouzas across different Upazilas).
+ */
+export function buildBatchedQueueTasks(params: {
+  division: DivisionNode;
+  district: DistrictNode;
+  upazila: UpazilaNode;
+  mouzas: MouzaNode[];
+  endpoints: EporchaEndpointType[];
+  surveys: SurveyType[];
+  bookStyle: BookStyleConfig;
+  khatianNo?: string;
+  mapSheetNo?: number;
+  batchSize?: number;
+}): QueueTask[] {
+  if (
+    params.mouzas.length === 0 ||
+    params.endpoints.length === 0 ||
+    params.surveys.length === 0
+  ) {
+    return [];
+  }
+
+  const batches = batchMouzasForQueue(params.mouzas, params.batchSize ?? 7);
+  const allTasks: QueueTask[] = [];
+
+  for (let idx = 0; idx < batches.length; idx++) {
+    const batch = batches[idx];
+    const batchTasks = generateTasksForMouzasAndEndpoints({
+      divisionNameEn: params.division.nameEn,
+      divisionSlug: params.division.eporchaSlug,
+      districtNameEn: params.district.nameEn,
+      districtNameBn: params.district.nameBn,
+      districtSlug: params.district.eporchaSlug,
+      upazilaNameEn: params.upazila.nameEn,
+      upazilaNameBn: params.upazila.nameBn,
+      upazilaSlug: params.upazila.eporchaSlug,
+      mouzas: batch,
+      endpoints: params.endpoints,
+      surveys: params.surveys,
+      bookStyle: params.bookStyle,
+      khatianNo: params.khatianNo || 'ALL',
+      mapSheetNo: params.mapSheetNo || 1,
+      batchIndex: idx + 1,
+      batchTotal: batches.length,
+      batchSize: batch.length,
+    });
+    allTasks.push(...batchTasks);
+  }
+
+  return allTasks;
+}
+
+/**
+ * Merges newly generated tasks with existing queue tasks idempotently:
+ * - Preserves existing completed, active, failed, retried, and checksum state for matching composite task IDs
+ * - Preserves already-completed downloads (CACHED_INDEXEDDB / HTML_INDEX_EXTRACTED) so re-selection never erases completed work
+ * - Never produces duplicate task IDs
+ */
+export function mergeQueueTasksPreservingProgress(
+  existingTasks: QueueTask[],
+  newTasks: QueueTask[]
+): QueueTask[] {
+  const existingById = new Map<string, QueueTask>();
+  for (const t of existingTasks) {
+    if (!existingById.has(t.id)) {
+      existingById.set(t.id, t);
+    }
+  }
+
+  const merged: QueueTask[] = [];
+  const includedIds = new Set<string>();
+
+  // Preserve prior completed downloads first so changing selections/endpoints never destroys verified work
+  for (const existing of existingTasks) {
+    if (
+      (existing.status === 'CACHED_INDEXEDDB' ||
+        existing.status === 'HTML_INDEX_EXTRACTED') &&
+      !includedIds.has(existing.id)
+    ) {
+      includedIds.add(existing.id);
+      merged.push(existing);
+    }
+  }
+
+  for (const candidate of newTasks) {
+    if (includedIds.has(candidate.id)) continue;
+    const prev = existingById.get(candidate.id);
+    if (prev) {
+      includedIds.add(prev.id);
+      // Update batch metadata if layout changed, keeping runtime state & verification metadata
+      merged.push({
+        ...prev,
+        batchIndex: candidate.batchIndex ?? prev.batchIndex,
+        batchTotal: candidate.batchTotal ?? prev.batchTotal,
+        batchSize: candidate.batchSize ?? prev.batchSize,
+      });
+    } else {
+      includedIds.add(candidate.id);
+      merged.push(candidate);
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Recovers stale FETCHING_EPORCHA_TECH tasks left interrupted after browser reload or Android process death.
+ */
+export function recoverStaleQueueTasks(tasks: QueueTask[]): QueueTask[] {
+  const nowIso = new Date().toISOString();
+  return tasks.map((t) =>
+    t.status === 'FETCHING_EPORCHA_TECH'
+      ? {
+          ...t,
+          status: 'QUEUED' as const,
+          errorMessage: 'Recovered to QUEUED after interruption/reload.',
+          updatedAt: nowIso,
+        }
+      : t
+  );
+}
+
+export function cancelQueueTask(tasks: QueueTask[], taskId: string): QueueTask[] {
+  const nowIso = new Date().toISOString();
+  return tasks.map((t) => {
+    if (t.id !== taskId) return t;
+    if (t.status === 'CACHED_INDEXEDDB' || t.status === 'HTML_INDEX_EXTRACTED') {
+      return t;
+    }
+    return {
+      ...t,
+      status: 'CANCELLED' as const,
+      errorMessage: 'Cancelled by user.',
+      updatedAt: nowIso,
+    };
+  });
+}
+
+export function cancelAllPendingTasks(tasks: QueueTask[]): QueueTask[] {
+  const nowIso = new Date().toISOString();
+  return tasks.map((t) =>
+    t.status === 'QUEUED' || t.status === 'FETCHING_EPORCHA_TECH'
+      ? {
+          ...t,
+          status: 'CANCELLED' as const,
+          errorMessage: 'Cancelled by user.',
+          updatedAt: nowIso,
+        }
+      : t
+  );
 }
 
 export function buildQueueTasksForUpazila(params: {
@@ -55,44 +220,45 @@ export function buildQueueTasksForUpazila(params: {
   bookStyle: BookStyleConfig;
   khatianNo?: string;
   mapSheetNo?: number;
+  batchSize?: number;
 }): {
   allMouzas: MouzaNode[];
   selectedMouzaIds: string[];
   tasks: QueueTask[];
 } {
-  // Explicitly iterate through the entire upazila.mouzas list (and any custom Mouzas) with zero slice/length limits
   const allMouzas: MouzaNode[] = [];
   const selectedMouzaIds: string[] = [];
+  const seenIds = new Set<string>();
 
   for (const mouza of params.upazila.mouzas) {
-    allMouzas.push(mouza);
-    selectedMouzaIds.push(mouza.id);
+    if (!seenIds.has(mouza.id)) {
+      seenIds.add(mouza.id);
+      allMouzas.push(mouza);
+      selectedMouzaIds.push(mouza.id);
+    }
   }
 
   if (params.customMouzas && params.customMouzas.length > 0) {
     for (const customMouza of params.customMouzas) {
-      if (!selectedMouzaIds.includes(customMouza.id)) {
+      if (!seenIds.has(customMouza.id)) {
+        seenIds.add(customMouza.id);
         allMouzas.push(customMouza);
         selectedMouzaIds.push(customMouza.id);
       }
     }
   }
 
-  const tasks = generateTasksForMouzasAndEndpoints({
-    divisionNameEn: params.division.nameEn,
-    divisionSlug: params.division.eporchaSlug,
-    districtNameEn: params.district.nameEn,
-    districtNameBn: params.district.nameBn,
-    districtSlug: params.district.eporchaSlug,
-    upazilaNameEn: params.upazila.nameEn,
-    upazilaNameBn: params.upazila.nameBn,
-    upazilaSlug: params.upazila.eporchaSlug,
+  const tasks = buildBatchedQueueTasks({
+    division: params.division,
+    district: params.district,
+    upazila: params.upazila,
     mouzas: allMouzas,
     endpoints: params.endpoints,
     surveys: params.surveys,
     bookStyle: params.bookStyle,
     khatianNo: params.khatianNo || 'ALL',
     mapSheetNo: params.mapSheetNo || 1,
+    batchSize: params.batchSize ?? 7,
   });
 
   return {
@@ -113,35 +279,35 @@ export function buildUnifiedQueueForDocumentSelection(params: {
   bookStyle: BookStyleConfig;
   khatianNo?: string;
   mapSheetNo?: number;
+  batchSize?: number;
 }): {
   selectedMouzaIds: string[];
   selectedMouzas: MouzaNode[];
   tasks: QueueTask[];
 } {
-  const matchedMouzas = params.allMouzasForUpazila.filter((m) =>
-    params.currentSelectedMouzaIds.includes(m.id)
-  );
-  const selectedMouzas =
-    params.currentSelectedMouzaIds.length === 0 || matchedMouzas.length === 0
-      ? params.allMouzasForUpazila
-      : matchedMouzas;
-  const selectedMouzaIds = selectedMouzas.map((m) => m.id);
+  const selectedSet = new Set(params.currentSelectedMouzaIds);
+  const selectedMouzas: MouzaNode[] = [];
+  const seenIds = new Set<string>();
 
-  const tasks = generateTasksForMouzasAndEndpoints({
-    divisionNameEn: params.division.nameEn,
-    divisionSlug: params.division.eporchaSlug,
-    districtNameEn: params.district.nameEn,
-    districtNameBn: params.district.nameBn,
-    districtSlug: params.district.eporchaSlug,
-    upazilaNameEn: params.upazila.nameEn,
-    upazilaNameBn: params.upazila.nameBn,
-    upazilaSlug: params.upazila.eporchaSlug,
+  for (const m of params.allMouzasForUpazila) {
+    if (selectedSet.has(m.id) && !seenIds.has(m.id)) {
+      seenIds.add(m.id);
+      selectedMouzas.push(m);
+    }
+  }
+
+  const selectedMouzaIds = selectedMouzas.map((m) => m.id);
+  const tasks = buildBatchedQueueTasks({
+    division: params.division,
+    district: params.district,
+    upazila: params.upazila,
     mouzas: selectedMouzas,
     endpoints: params.endpoints,
     surveys: params.surveys,
     bookStyle: params.bookStyle,
     khatianNo: params.khatianNo || 'ALL',
     mapSheetNo: params.mapSheetNo || 1,
+    batchSize: params.batchSize ?? 7,
   });
 
   return {
@@ -156,15 +322,28 @@ export function calculatePoliteJitterDelay(minMs = 120, maxMs = 250, seedIndex =
   const clampedMax = Math.max(clampedMin, maxMs);
   const spread = clampedMax - clampedMin;
   if (spread === 0) return clampedMin;
-  // Deterministic-friendly offset mixed with time step
   const stepOffset = (seedIndex * 173 + 89) % (spread + 1);
   return clampedMin + stepOffset;
 }
 
+export function isTransientHttpStatus(httpStatus?: number): boolean {
+  if (httpStatus === undefined || httpStatus === 0) return true;
+  if (httpStatus === 408 || httpStatus === 425 || httpStatus === 429) return true;
+  if (httpStatus >= 500 && httpStatus < 600) return true;
+  return false;
+}
+
+export function isTransientTaskFailure(task: QueueTask): boolean {
+  if (task.status === 'CORS_BRIDGE_REQUIRED') return true;
+  if (typeof task.httpStatus === 'number' && task.httpStatus > 0) {
+    return isTransientHttpStatus(task.httpStatus);
+  }
+  return task.status === 'FAILED_RETRY';
+}
+
 /**
- * Resets tasks that previously failed or encountered CORS errors back to QUEUED,
- * incrementing their retryCount and enforcing the user's configured automatic retry budget.
- * Tasks that exhaust `maxTaskRetryBudget` are flagged as 'PERMANENT_FAILURE'.
+ * Resets transient failed tasks back to QUEUED, enforcing retry budget.
+ * Permanent 4xx failures (400, 401, 403, 404, 410, 422) transition immediately to PERMANENT_FAILURE.
  */
 export function retryFailedTasks(
   tasks: QueueTask[],
@@ -185,6 +364,16 @@ export function retryFailedTasks(
       t.status === 'CORS_BRIDGE_REQUIRED' ||
       t.status === 'NOT_AVAILABLE_ON_EPORCHA_TECH'
     ) {
+      if (!isTransientTaskFailure(t)) {
+        exhaustedCount++;
+        return {
+          ...t,
+          status: 'PERMANENT_FAILURE' as const,
+          errorMessage: `Permanent Client Error (HTTP ${t.httpStatus}) — not retried (${t.errorMessage || 'Resource rejected or not found'}).`,
+          updatedAt: nowIso,
+        };
+      }
+
       const nextRetryCount = (t.retryCount || 0) + 1;
       if (nextRetryCount >= budget) {
         exhaustedCount++;
@@ -192,7 +381,7 @@ export function retryFailedTasks(
           ...t,
           status: 'PERMANENT_FAILURE' as const,
           retryCount: nextRetryCount,
-          errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget (${t.errorMessage || 'Dead or unreachable portal link'}).`,
+          errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget (${t.errorMessage || 'Transient portal failure'}).`,
           updatedAt: nowIso,
         };
       }
@@ -213,11 +402,8 @@ export function retryFailedTasks(
 
 /**
  * Enforces the Smart Pause per-task automatic retry budget (`maxTaskRetryBudget`) after a task fetch attempt:
- * - Successful tasks (`CACHED_INDEXEDDB`, `HTML_INDEX_EXTRACTED`) are returned unchanged.
- * - Failed tasks increment `retryCount`:
- *   - If `retryCount < maxTaskRetryBudget`, the task is automatically re-queued (`QUEUED`) for retry.
- *   - If `retryCount >= maxTaskRetryBudget`, the task is automatically flagged as `'PERMANENT_FAILURE'`
- *     so the queue stops wasting resources on dead links.
+ * - Retries transient failures only (network timeouts, HTTP 0, 408, 425, 429, 5xx).
+ * - Non-transient 4xx client/auth/not-found errors transition immediately to 'PERMANENT_FAILURE'.
  */
 export function applyTaskRetryBudgetPolicy(
   task: QueueTask,
@@ -229,7 +415,9 @@ export function applyTaskRetryBudgetPolicy(
 } {
   if (
     task.status === 'CACHED_INDEXEDDB' ||
-    task.status === 'HTML_INDEX_EXTRACTED'
+    task.status === 'HTML_INDEX_EXTRACTED' ||
+    task.status === 'CANCELLED' ||
+    task.status === 'PERMANENT_FAILURE'
   ) {
     return {
       nextTask: task,
@@ -238,9 +426,23 @@ export function applyTaskRetryBudgetPolicy(
     };
   }
 
+  const nowIso = task.updatedAt || new Date().toISOString();
+
+  if (!isTransientTaskFailure(task)) {
+    return {
+      nextTask: {
+        ...task,
+        status: 'PERMANENT_FAILURE',
+        errorMessage: `Permanent Error (HTTP ${task.httpStatus}): ${task.errorMessage || 'Portal returned non-retryable 4xx response'}`,
+        updatedAt: nowIso,
+      },
+      autoRequeued: false,
+      flaggedPermanentFailure: true,
+    };
+  }
+
   const budget = Math.max(1, maxTaskRetryBudget || 3);
   const nextRetryCount = (task.retryCount || 0) + 1;
-  const nowIso = task.updatedAt || new Date().toISOString();
 
   if (nextRetryCount >= budget) {
     return {
@@ -248,7 +450,7 @@ export function applyTaskRetryBudgetPolicy(
         ...task,
         status: 'PERMANENT_FAILURE',
         retryCount: nextRetryCount,
-        errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget — ${task.errorMessage || 'Dead or unreachable portal link'}`,
+        errorMessage: `Permanent Failure: Exhausted ${budget}/${budget} automatic retry budget — ${task.errorMessage || 'Unreachable after transient retries'}`,
         updatedAt: nowIso,
       },
       autoRequeued: false,
@@ -477,18 +679,23 @@ export async function processSingleQueueTask(
     await saveExtractedKhatianRecords(validation.extractedRecords);
   }
 
-  // Case 1: Authentic %PDF- Binary Verified (> 1024 bytes)
-  if (validation.isValidPdf) {
+  // Case 1: Authentic Structurally Valid %PDF- Binary Verified (> 1024 bytes)
+  if (outcome.ok && validation.isValidPdf && validation.structurallyValid) {
+    const retrievedAt = outcome.retrievedAt || nowIso;
+    const finalUrl = outcome.finalUrl || task.targetUrl;
     const blobRecord: VerifiedBlobRecord = {
       taskId: task.id,
       fileName: task.fileName,
       mimeType: 'application/pdf',
       isPdfVerified: true,
+      structurallyValid: validation.structurallyValid,
       byteLength: validation.byteLength,
       magicHex: validation.magicBytesHex,
+      sha256: validation.sha256,
       buffer: outcome.buffer,
       targetUrl: task.targetUrl,
-      verifiedAt: nowIso,
+      finalUrl,
+      verifiedAt: retrievedAt,
     };
     await saveVerifiedPdfBlob(blobRecord);
 
@@ -500,6 +707,15 @@ export async function processSingleQueueTask(
         latencyMs,
         byteLength: validation.byteLength,
         magicBytesHex: validation.magicBytesHex,
+        sha256: validation.sha256,
+        finalUrl,
+        mimeType: outcome.mimeType || 'application/pdf',
+        retrievedAt,
+        headerValid: Boolean(validation.headerValid),
+        structurallyValid: Boolean(validation.structurallyValid),
+        checksumRecorded: Boolean(validation.checksumRecorded),
+        sourceVerified: false,
+        officiallyAuthentic: false,
         pdfVerified: true,
         extractedRowCount: validation.extractedRecords.length,
         transportUsed: outcome.transportUsed,
@@ -514,6 +730,7 @@ export async function processSingleQueueTask(
 
   // Case 2: Structured HTML/JSON record payload found on URL — cache in IndexedDB with authentic extension (.html / .json)
   if (
+    outcome.ok &&
     outcome.httpStatus >= 200 &&
     outcome.httpStatus < 300 &&
     validation.byteLength > 0 &&
@@ -521,16 +738,23 @@ export async function processSingleQueueTask(
   ) {
     const ext = validation.isJsonPayload ? '.json' : '.html';
     const authenticFileName = task.fileName.replace(/\.pdf$/i, ext);
+    const retrievedAt = outcome.retrievedAt || nowIso;
+    const finalUrl = outcome.finalUrl || task.targetUrl;
+    const mimeType = validation.isJsonPayload ? 'application/json' : 'text/html';
+
     const blobRecord: VerifiedBlobRecord = {
       taskId: task.id,
       fileName: authenticFileName,
-      mimeType: validation.isJsonPayload ? 'application/json' : 'text/html',
+      mimeType,
       isPdfVerified: false,
+      structurallyValid: false,
       byteLength: validation.byteLength,
       magicHex: validation.magicBytesHex,
+      sha256: validation.sha256,
       buffer: outcome.buffer,
       targetUrl: task.targetUrl,
-      verifiedAt: nowIso,
+      finalUrl,
+      verifiedAt: retrievedAt,
     };
     await saveVerifiedPdfBlob(blobRecord);
 
@@ -542,6 +766,15 @@ export async function processSingleQueueTask(
         latencyMs,
         byteLength: validation.byteLength,
         magicBytesHex: validation.magicBytesHex,
+        sha256: validation.sha256,
+        finalUrl,
+        mimeType,
+        retrievedAt,
+        headerValid: false,
+        structurallyValid: false,
+        checksumRecorded: Boolean(validation.checksumRecorded),
+        sourceVerified: false,
+        officiallyAuthentic: false,
         pdfVerified: false,
         extractedRowCount: validation.extractedRecords.length,
         transportUsed: outcome.transportUsed,
@@ -554,17 +787,30 @@ export async function processSingleQueueTask(
     };
   }
 
-  // Case 3: HTTP 404/5xx or unreachable
+  // Case 3: HTTP 4xx/5xx, corrupt/truncated PDF, or unreachable
   const isHttpError = outcome.httpStatus >= 400 || outcome.httpStatus === 0;
   return {
     updatedTask: {
       ...task,
       status:
-        outcome.httpStatus === 0 ? 'CORS_BRIDGE_REQUIRED' : 'NOT_AVAILABLE_ON_EPORCHA_TECH',
+        outcome.httpStatus === 0
+          ? 'CORS_BRIDGE_REQUIRED'
+          : isTransientHttpStatus(outcome.httpStatus)
+          ? 'FAILED_RETRY'
+          : 'NOT_AVAILABLE_ON_EPORCHA_TECH',
       httpStatus: outcome.httpStatus,
       latencyMs,
       byteLength: validation.byteLength,
       magicBytesHex: validation.magicBytesHex,
+      sha256: validation.sha256,
+      finalUrl: outcome.finalUrl || task.targetUrl,
+      mimeType: outcome.mimeType,
+      retrievedAt: outcome.retrievedAt || nowIso,
+      headerValid: Boolean(validation.headerValid),
+      structurallyValid: Boolean(validation.structurallyValid),
+      checksumRecorded: Boolean(validation.checksumRecorded),
+      sourceVerified: false,
+      officiallyAuthentic: false,
       pdfVerified: false,
       extractedRowCount: 0,
       transportUsed: outcome.transportUsed,
@@ -597,10 +843,14 @@ export function generateManifestAuditCsv(tasks: QueueTask[]): string {
     'HTTP_Status',
     'Byte_Length',
     'Magic_Bytes_Hex',
+    'SHA256',
+    'Verification_Tier',
     'PDF_Verified',
     'Extracted_Rows',
     'Transport_Mode',
     'Source_URL',
+    'Final_URL',
+    'Retrieved_At',
     'Updated_At',
   ];
 
@@ -612,8 +862,16 @@ export function generateManifestAuditCsv(tasks: QueueTask[]): string {
     return str;
   };
 
-  const rows = tasks.map((t) =>
-    [
+  const rows = tasks.map((t) => {
+    const verificationTier = t.structurallyValid
+      ? t.checksumRecorded
+        ? 'checksum_recorded'
+        : 'structurally_valid'
+      : t.headerValid
+      ? 'header_valid'
+      : 'downloaded';
+
+    return [
       t.id,
       t.fileName,
       t.endpointType,
@@ -629,15 +887,19 @@ export function generateManifestAuditCsv(tasks: QueueTask[]): string {
       t.httpStatus ?? '',
       t.byteLength ?? 0,
       t.magicBytesHex ?? '',
-      t.pdfVerified ? 'YES (%PDF-)' : 'URL_RECORD_EXTRACTED',
+      t.sha256 ?? '',
+      verificationTier,
+      t.pdfVerified ? 'YES (%PDF- Structural)' : 'HTML_OR_JSON_ONLY',
       t.extractedRowCount ?? 0,
       t.transportUsed ?? '',
       t.targetUrl,
+      t.finalUrl ?? t.targetUrl,
+      t.retrievedAt ?? t.updatedAt,
       t.updatedAt,
     ]
       .map(escapeCsv)
-      .join(',')
-  );
+      .join(',');
+  });
 
   return [headers.join(','), ...rows].join('\n');
 }
@@ -650,24 +912,24 @@ export function generateManifestAuditMarkdown(
   const totalBytes = tasks.reduce((acc, t) => acc + (t.byteLength || 0), 0);
 
   const lines: string[] = [
-    `# MANIFEST_AUDIT.md — LandArchive BD / LRgetBD v2.1 Forensic Archive Report`,
+    `# MANIFEST_AUDIT.md — LRgetBD-Pro v2.1 Forensic Archive Report`,
     ``,
     `- **Generated At:** \`${now}\``,
-    `- **Target Open-Access Portal:** \`https://eporcha.tech\``,
+    `- **Target Portal:** \`https://eporcha.tech\``,
     `- **Total Tasks Audited:** \`${tasks.length}\``,
-    `- **Verified %PDF- Binaries Bundled:** \`${verifiedPdfCount}\``,
+    `- **Structurally Valid %PDF- Binaries Bundled:** \`${verifiedPdfCount}\``,
     `- **Total Downloaded Payload Size:** \`${(totalBytes / 1024).toFixed(2)} KB\``,
-    `- **Anti-Hallucination Policy:** Zero synthetic/mock PDFs. Every \`.pdf\` passed \`0x25 0x50 0x44 0x46 0x2D\` (\`%PDF-\`) header verification and \`> 1024\` byte length gate; HTML/JSON URL database responses are preserved with their authentic \`.html\`/\`.json\` extensions.`,
+    `- **Integrity Policy:** Zero synthetic/mock PDFs. Every bundled \`.pdf\` passed \`%PDF-\` header verification, structural PDF checks (obj/endobj, xref, startxref, %%EOF), \`> 1024\` byte length gate, and exact-byte SHA-256 hashing. HTML/JSON responses retain authentic \`.html\`/\`.json\` extensions and are never labeled as official authenticity proofs.`,
     ``,
     `## Task Verification Matrix`,
     ``,
-    `| JL No | Mouza | Survey | Mode | Forensic FileName | Status | HTTP | Magic Hex | Verified PDF |`,
-    `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |`,
+    `| JL No | Mouza | Survey | Mode | Forensic FileName | Status | HTTP | Bytes | SHA-256 | Verified PDF |`,
+    `| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |`,
   ];
 
   for (const t of tasks) {
     lines.push(
-      `| JL-${t.mouzaJlNo} | ${t.mouzaNameBn} (${t.mouzaNameEn}) | ${t.surveyType} | \`${t.endpointType}\` | \`${t.fileName}\` | \`${t.status}\` | ${t.httpStatus ?? '-'} | \`${t.magicBytesHex ?? '-'}\` | ${t.pdfVerified ? 'YES' : 'URL_RECORD'} |`
+      `| JL-${t.mouzaJlNo} | ${t.mouzaNameBn} (${t.mouzaNameEn}) | ${t.surveyType} | \`${t.endpointType}\` | \`${t.fileName}\` | \`${t.status}\` | ${t.httpStatus ?? '-'} | ${t.byteLength ?? 0} | \`${t.sha256 ? t.sha256.slice(0, 16) + '...' : '-'}\` | ${t.pdfVerified && t.structurallyValid ? 'YES' : 'NON-PDF'} |`
     );
   }
 
@@ -695,11 +957,12 @@ export async function buildVerifiedArchiveZip(tasks: QueueTask[]): Promise<{
     if (!stored || !stored.buffer) continue;
 
     const bytes = new Uint8Array(stored.buffer);
-    if (hasPdfMagicSignature(bytes) && stored.buffer.byteLength > MIN_VALID_PDF_BYTES) {
+    if (isStructurallyValidPdf(bytes)) {
       pdfFolder?.file(task.fileName, stored.buffer, { binary: true });
       verifiedPdfCount++;
     } else if (stored.buffer.byteLength > 0) {
-      urlRecordsFolder?.file(stored.fileName, stored.buffer, { binary: true });
+      const nonPdfName = stored.fileName.replace(/\.pdf$/i, '.html');
+      urlRecordsFolder?.file(nonPdfName, stored.buffer, { binary: true });
     }
   }
 
@@ -716,7 +979,7 @@ export async function buildVerifiedArchiveZip(tasks: QueueTask[]): Promise<{
   });
 
   const dateTag = new Date().toISOString().slice(0, 10);
-  const auditFileName = `LandArchiveBD_eporcha_tech_${dateTag}_${tasks.length}tasks.zip`;
+  const auditFileName = `LRgetBD_Pro_eporcha_tech_${dateTag}_${tasks.length}tasks.zip`;
 
   return {
     zipBlob,

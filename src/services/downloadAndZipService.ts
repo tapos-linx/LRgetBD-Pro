@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { QueueTask, VerifiedBlobRecord } from '../types/land';
-import { hasPdfMagicSignature, MIN_VALID_PDF_BYTES } from './binaryValidator';
+import { isStructurallyValidPdf } from './binaryValidator';
 import {
   getAllVerifiedPdfBlobs,
   getVerifiedPdfBlob,
@@ -24,7 +24,7 @@ export interface StructuredZipResult {
 
 /**
  * Triggers an immediate browser download for an individual task's PDF/document.
- * Loads directly from memory buffer if provided, or fetches from IndexedDB cache.
+ * Uses stored authentic filename/mimeType so HTML/JSON payloads are never saved with a .pdf extension.
  */
 export async function triggerIndividualPdfDownload(
   task: QueueTask,
@@ -32,13 +32,15 @@ export async function triggerIndividualPdfDownload(
 ): Promise<boolean> {
   try {
     let buffer = blobBuffer;
-    let mimeType = 'application/pdf';
+    let mimeType = task.mimeType || 'application/pdf';
+    let storedFileName = task.fileName;
 
     if (!buffer) {
       const stored = await getVerifiedPdfBlob(task.id);
       if (stored && stored.buffer) {
         buffer = stored.buffer;
-        mimeType = stored.mimeType || 'application/pdf';
+        mimeType = stored.mimeType || mimeType;
+        storedFileName = stored.fileName || storedFileName;
       }
     }
 
@@ -47,16 +49,22 @@ export async function triggerIndividualPdfDownload(
       return false;
     }
 
+    const bytes = new Uint8Array(buffer);
+    const validPdf = isStructurallyValidPdf(bytes);
+    if (!validPdf && /\.pdf$/i.test(storedFileName)) {
+      const fallbackExt = mimeType.includes('json') ? '.json' : '.html';
+      storedFileName = storedFileName.replace(/\.pdf$/i, fallbackExt);
+    }
+
     const blob = new Blob([buffer], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = task.fileName || `LandRecord_${task.id}.pdf`;
+    link.download = storedFileName || `LandRecord_${task.id}${validPdf ? '.pdf' : '.html'}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    // Give browser a moment before revoking
     setTimeout(() => {
       URL.revokeObjectURL(url);
     }, 1500);
@@ -81,7 +89,7 @@ function sanitizePathComponent(name: string): string {
 /**
  * Bundles verified blobs from IndexedDB into a structured ZIP archive:
  * Directory layout: [District]/[Upazila]/[Survey]/[Standardized_Filename].pdf
- * Includes MANIFEST_AUDIT.csv and MANIFEST_AUDIT.md
+ * Includes MANIFEST_AUDIT.csv and MANIFEST_AUDIT.md with SHA-256 and provenance metadata.
  */
 export async function bundleTasksToStructuredZip(params: {
   tasks: QueueTask[];
@@ -118,7 +126,7 @@ export async function bundleTasksToStructuredZip(params: {
 
     const buffer = stored.buffer;
     const bytes = new Uint8Array(buffer);
-    const isValidPdf = hasPdfMagicSignature(bytes) && buffer.byteLength > MIN_VALID_PDF_BYTES;
+    const isValidPdf = isStructurallyValidPdf(bytes);
 
     // Build directory path: [District]/[Upazila]/[Survey]/[Filename]
     const districtDir = sanitizePathComponent(task.districtNameEn || 'District');
@@ -131,7 +139,10 @@ export async function bundleTasksToStructuredZip(params: {
       verifiedPdfCount++;
       totalBytes += buffer.byteLength;
     } else if (buffer.byteLength > 0) {
-      const rawExt = stored.fileName.endsWith('.json') ? '.json' : '.html';
+      const rawExt =
+        stored.fileName.endsWith('.json') || stored.mimeType?.includes('json')
+          ? '.json'
+          : '.html';
       const rawFileName = task.fileName.replace(/\.pdf$/i, rawExt);
       const filePath = `${districtDir}/${upazilaDir}/${surveyDir}/metadata_records/${rawFileName}`;
       zip.file(filePath, buffer, { binary: true });

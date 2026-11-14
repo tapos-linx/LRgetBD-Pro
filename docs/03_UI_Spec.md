@@ -16,12 +16,12 @@
 
 1. **Top App Bar (Strict 3-Zone Contract):**
    - **Zone 1 (Brand):** Single-line wordmark `LRgetBD v2.1 · LandArchive BD`.
-   - **Zone 2 (Navigation):** 4 single-line workspace tabs (`Extractor`, `Live Queue`, `Tabular Index`, `6-Doc Architecture`).
-   - **Zone 3 (Primary Action):** `Download Android APK` trigger opening `ApkInstallerModal`.
+   - **Zone 2 (Navigation):** 5 single-line workspace tabs (`Extractor`, `Live Queue`, `Integrity Health`, `Tabular Index`, `Architecture`).
+   - **Zone 3 (Primary Action):** `Download APK` trigger opening `ApkInstallerModal`.
 2. **Workspace Status Strip:**
-   - Displays active transport mode (`Native Capacitor HTTP (CORS-Free)` vs `Server/Web Proxy Relay`), active `eporcha.tech` endpoint path, and queue progress counters.
-3. **5-Mode Selector Cards:**
-   - Interactive button cards for `mouza-vittik-khatian`, `mouza-vittik-dag`, `survey-khatian`, `namjari-khatian`, and `mouza-map`.
+   - Displays active transport mode (`Native Capacitor HTTP` vs `Server/Web Proxy Relay`), active `eporcha.tech` endpoint path, and queue progress counters.
+3. **6-Mode Selector Cards:**
+   - Interactive button cards for `mouza-vittik-khatian`, `mouza-vittik-dag`, `survey-khatian`, `namjari-khatian`, `mouza-map`, and `khatian-index`.
 4. **Cascading Geo Filter & All Mouza Selection Grid (`সকল মৌজা নির্বাচন`):**
    - Division → District → Upazila → Union Filter (`All Unions`, `20-No Kaitala South Union`, etc.).
    - Selecting an Upazila immediately counts, fetches, and selects **all Mouzas within that Upazila** (e.g., all **176 Mouzas** in Nabinagar Upazila).

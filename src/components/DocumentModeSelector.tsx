@@ -55,34 +55,35 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
   onSelectAllAndFetch,
   disabled = false,
 }) => {
-  // Toggle individual endpoint
+  // Toggle individual endpoint (supports genuine Clear All down to 0)
   const handleToggleEndpoint = (endpoint: EporchaEndpointType) => {
     if (disabled) return;
     if (selectedEndpoints.includes(endpoint)) {
-      if (selectedEndpoints.length > 1) {
-        onEndpointsChange(selectedEndpoints.filter((e) => e !== endpoint));
-      }
+      onEndpointsChange(selectedEndpoints.filter((e) => e !== endpoint));
     } else {
       onEndpointsChange([...selectedEndpoints, endpoint]);
     }
   };
 
-  // Toggle individual survey
+  // Toggle individual survey (supports genuine Clear All down to 0)
   const handleToggleSurvey = (survey: SurveyType) => {
     if (disabled) return;
     if (selectedSurveys.includes(survey)) {
-      if (selectedSurveys.length > 1) {
-        onSurveysChange(selectedSurveys.filter((s) => s !== survey));
-      }
+      onSurveysChange(selectedSurveys.filter((s) => s !== survey));
     } else {
       onSurveysChange([...selectedSurveys, survey]);
     }
   };
 
-  // Fast Batch: Select all 5 endpoints
+  // Fast Batch: Select all 6 endpoints
   const handleSelectAllEndpoints = () => {
     if (disabled) return;
     onEndpointsChange([...ALL_ENDPOINT_TYPES]);
+  };
+
+  const handleClearAllEndpoints = () => {
+    if (disabled) return;
+    onEndpointsChange([]);
   };
 
   // Fast Batch: Select all surveys
@@ -91,15 +92,26 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
     onSurveysChange([...ALL_SURVEY_TYPES]);
   };
 
+  const handleClearAllSurveys = () => {
+    if (disabled) return;
+    onSurveysChange([]);
+  };
+
   // Fast Batch: RS + BS Recommended
   const handleSelectRecommendedSurveys = () => {
     if (disabled) return;
     onSurveysChange(['RS', 'BS']);
   };
 
-  // Computed Cartesian product
+  // Computed matrix matching buildBatchedQueueTasks (namjari-khatian maps to 1 MUTATION task per Mouza)
   const estimatedTasks =
-    selectedMouzaCount * selectedEndpoints.length * selectedSurveys.length;
+    selectedSurveys.length === 0
+      ? 0
+      : selectedEndpoints.reduce((total, ep) => {
+          const surveysForEndpoint =
+            ep === 'namjari-khatian' ? 1 : selectedSurveys.length;
+          return total + selectedMouzaCount * surveysForEndpoint;
+        }, 0);
 
   const getEndpointIcon = (endpoint: EporchaEndpointType) => {
     switch (endpoint) {
@@ -173,11 +185,11 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
             <span className="text-slate-300">|</span>
             <button
               type="button"
-              onClick={() => onEndpointsChange(['mouza-vittik-khatian'])}
-              disabled={disabled || (selectedEndpoints.length === 1 && selectedEndpoints[0] === 'mouza-vittik-khatian')}
+              onClick={handleClearAllEndpoints}
+              disabled={disabled || selectedEndpoints.length === 0}
               className="text-[11px] font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-40"
             >
-              Reset to Khatian Book
+              Clear All
             </button>
           </div>
         </div>
@@ -257,6 +269,15 @@ export const DocumentModeSelector: React.FC<DocumentModeSelectorProps> = ({
               className="text-[11px] font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-40"
             >
               RS + BS Only
+            </button>
+            <span className="text-slate-300">|</span>
+            <button
+              type="button"
+              onClick={handleClearAllSurveys}
+              disabled={disabled || selectedSurveys.length === 0}
+              className="text-[11px] font-medium text-slate-500 hover:text-slate-700 cursor-pointer disabled:opacity-40"
+            >
+              Clear All
             </button>
           </div>
         </div>

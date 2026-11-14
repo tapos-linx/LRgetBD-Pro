@@ -2,12 +2,12 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   DistrictNode,
   DivisionNode,
+  GeoSourceStatus,
   MouzaNode,
   UpazilaNode,
 } from '../types/land';
 import { BANGLADESH_NATIONWIDE_HIERARCHY } from '../data/bangladeshNationwideHierarchy';
 import { geoDiscovery } from '../services/geoDiscoveryService';
-import { geoDb } from '../services/geographicDbService';
 
 export interface UseCascadingGeoReturn {
   // Cascading Selection State
@@ -28,6 +28,8 @@ export interface UseCascadingGeoReturn {
   // Status
   isDiscovering: boolean;
   discoveryStatus: string | null;
+  geoSourceStatus: GeoSourceStatus | null;
+  discoveryError: string | null;
 
   // Active Hierarchy Nodes
   activeDivision: DivisionNode | null;
@@ -97,7 +99,15 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
   );
 
   const [isDiscovering, setIsDiscovering] = useState(false);
-  const [discoveryStatus, setDiscoveryStatus] = useState<string | null>(null);
+  const [discoveryStatus, setDiscoveryStatus] = useState<string | null>(
+    initialMouzas.length > 0
+      ? `Loaded ${initialMouzas.length} Mouzas for ${initialUpazila?.nameEn || 'Nabinagar'} (Local Dataset).`
+      : null
+  );
+  const [geoSourceStatus, setGeoSourceStatus] = useState<GeoSourceStatus | null>(
+    initialMouzas.length > 0 ? 'LOCAL_DATASET' : null
+  );
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   // Active Division
   const activeDivision = useMemo(() => {
@@ -186,6 +196,8 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setMouzas([]);
         setSelectedMouzaIds([]);
         setDiscoveryStatus(null);
+        setGeoSourceStatus(null);
+        setDiscoveryError(null);
         return;
       }
 
@@ -222,16 +234,19 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         );
         setMouzas(fullMouzaList);
         setSelectedMouzaIds(allMouzaIds);
+        setGeoSourceStatus('LOCAL_DATASET');
+        setDiscoveryError(null);
         setDiscoveryStatus(
-          `${upzPrefix}Found ${fullMouzaList.length} Mouzas for ${upzName} (Authoritative Record). Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
+          `${upzPrefix}Loaded ${fullMouzaList.length} Mouzas for ${upzName} (Local Dataset). Selected ${allMouzaIds.length} Mouzas (100%).`
         );
         setIsDiscovering(false);
         return;
       }
 
       setIsDiscovering(true);
+      setDiscoveryError(null);
       setDiscoveryStatus(
-        `${upzPrefix}Querying eporcha.tech URL for Mouzas in ${upzName}...`
+        `${upzPrefix}Querying eporcha.tech API for Mouzas in ${upzName}...`
       );
 
       try {
@@ -247,19 +262,29 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setMouzas(fullMouzaList);
         // Auto-select ALL discovered Mouza IDs (100%)
         setSelectedMouzaIds(allMouzaIds);
+        setGeoSourceStatus(summary.sourceStatus);
+        setDiscoveryError(summary.errorMessage || null);
 
-        if (summary.totalFound > 0) {
+        if (summary.sourceStatus === 'FAILED') {
           setDiscoveryStatus(
-            `${upzPrefix}Found ${summary.totalFound} Mouzas for ${summary.upazilaNameEn || upzName} from eporcha.tech URL. Auto-selected all ${allMouzaIds.length} Mouzas (100%).`
+            `${upzPrefix}Discovery failed for ${upzName}: ${summary.errorMessage || 'Unable to query upstream source.'}`
+          );
+        } else if (summary.totalFound > 0) {
+          const sourceLabel = summary.isLive ? 'Live Portal Source' : 'Local Dataset';
+          setDiscoveryStatus(
+            `${upzPrefix}Found ${summary.totalFound} Mouzas for ${summary.upazilaNameEn || upzName} (${sourceLabel}). Selected ${allMouzaIds.length} Mouzas (100%).`
           );
         } else {
           setDiscoveryStatus(
-            `${upzPrefix}No Mouza records found for ${upzName} from URL.`
+            `${upzPrefix}No Mouza records found for ${upzName}.`
           );
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.error('Mouza URL Discovery Failed:', err);
-        setDiscoveryStatus(`Failed to fetch Mouzas for ${upzName} from URL.`);
+        setGeoSourceStatus('FAILED');
+        setDiscoveryError(msg);
+        setDiscoveryStatus(`Failed to fetch Mouzas for ${upzName}: ${msg}`);
       } finally {
         setIsDiscovering(false);
       }
@@ -280,6 +305,8 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setMouzas([]);
         setSelectedMouzaIds([]);
         setDiscoveryStatus(null);
+        setGeoSourceStatus(null);
+        setDiscoveryError(null);
         return;
       }
 
@@ -298,8 +325,9 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
       const distName = authDist?.nameEn || distId.replace(/^dist-/, '');
 
       setIsDiscovering(true);
+      setDiscoveryError(null);
       setDiscoveryStatus(
-        `Querying eporcha.tech URL for all Upazilas in ${distName} District...`
+        `Querying eporcha.tech API for all Upazilas in ${distName} District...`
       );
 
       try {
@@ -307,6 +335,8 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         const discoveredUpazilas = upzSummary.upazilas;
 
         setUpazilas(discoveredUpazilas);
+        setGeoSourceStatus(upzSummary.sourceStatus);
+        setDiscoveryError(upzSummary.errorMessage || null);
 
         if (discoveredUpazilas.length > 0) {
           const firstUpz = discoveredUpazilas[0];
@@ -321,12 +351,18 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
           setSelectedUpazilaIdState(null);
           setMouzas([]);
           setSelectedMouzaIds([]);
-          setDiscoveryStatus(`No upazilas found for ${distName} District in URL.`);
+          setDiscoveryStatus(
+            upzSummary.errorMessage ||
+              `No upazilas found for ${distName} District.`
+          );
           setIsDiscovering(false);
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.error('Upazila URL Discovery Failed:', err);
-        setDiscoveryStatus(`Failed to fetch Upazilas for ${distName} from URL.`);
+        setGeoSourceStatus('FAILED');
+        setDiscoveryError(msg);
+        setDiscoveryStatus(`Failed to fetch Upazilas for ${distName}: ${msg}`);
         setIsDiscovering(false);
       }
     },
@@ -348,6 +384,8 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
         setMouzas([]);
         setSelectedMouzaIds([]);
         setDiscoveryStatus(null);
+        setGeoSourceStatus(null);
+        setDiscoveryError(null);
         return;
       }
 
@@ -549,6 +587,8 @@ export function useCascadingGeo(): UseCascadingGeoReturn {
 
     isDiscovering,
     discoveryStatus,
+    geoSourceStatus,
+    discoveryError,
 
     activeDivision,
     activeDistrict,

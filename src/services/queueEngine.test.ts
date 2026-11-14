@@ -1,19 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  batchMouzasForQueue,
+  buildBatchedQueueTasks,
   buildQueueTasksForUpazila,
+  buildUnifiedQueueForDocumentSelection,
   calculatePoliteJitterDelay,
   calculateQueueProgress,
+  cancelAllPendingTasks,
+  cancelQueueTask,
   computeDocumentTypeSizeStats,
   computeQueueIntegrityHealthReport,
   evaluateTaskSizeIntegrity,
+  mergeQueueTasksPreservingProgress,
   moveQueueTaskByOffset,
   prioritizeMouzaInQueue,
+  recoverStaleQueueTasks,
   reorderQueueTasks,
   requeueIntegrityFlaggedTasks,
 } from './queueEngine';
-import { GEO_HIERARCHY } from '../data/geoHierarchy';
-import { QueueTask } from '../types/land';
+import { ALL_ENDPOINT_TYPES, ALL_SURVEY_TYPES, GEO_HIERARCHY } from '../data/geoHierarchy';
+import { MouzaNode, QueueTask } from '../types/land';
 
 function makeSampleTasks(): QueueTask[] {
   const div = GEO_HIERARCHY[0];
@@ -29,6 +36,126 @@ function makeSampleTasks(): QueueTask[] {
   });
   return tasks.slice(0, 4);
 }
+
+function makeSyntheticMouzas(count: number, prefix = 'mz'): MouzaNode[] {
+  return Array.from({ length: count }, (_, idx) => ({
+    id: `${prefix}-${idx + 1}`,
+    jlNo: String(idx + 1),
+    nameEn: `Mouza ${idx + 1}`,
+    nameBn: `মৌজা ${idx + 1}`,
+    unionNameEn: 'Union A',
+    unionNameBn: 'ইউনিয়ন এ',
+    availableSurveys: ['RS', 'BS'],
+    estimatedKhatians: 100,
+    estimatedDags: 200,
+    mapSheets: [1],
+  }));
+}
+
+test('batchMouzasForQueue splits 23 unique Mouzas into 7 + 7 + 7 + 2 batches and deduplicates duplicate IDs', () => {
+  const base23 = makeSyntheticMouzas(23);
+  const withDuplicates = [...base23, base23[0], base23[10], base23[22]];
+  const batches = batchMouzasForQueue(withDuplicates, 7);
+
+  assert.equal(batches.length, 4);
+  assert.deepEqual(
+    batches.map((b) => b.length),
+    [7, 7, 7, 2]
+  );
+  const flattenedIds = batches.flat().map((m) => m.id);
+  assert.equal(new Set(flattenedIds).size, 23);
+});
+
+test('buildBatchedQueueTasks assigns batch metadata, avoids mixing Upazilas, and handles empty selection', () => {
+  const div = GEO_HIERARCHY[0];
+  const dist = div.districts[0];
+  const upz1 = dist.upazilas[0];
+  const upz2 = { ...dist.upazilas[0], id: 'upz-other', nameEn: 'Kasba', eporchaSlug: 'kasba' };
+
+  const mouzas23 = makeSyntheticMouzas(23);
+  const batchedTasks = buildBatchedQueueTasks({
+    division: div,
+    district: dist,
+    upazila: upz1,
+    mouzas: mouzas23,
+    endpoints: ['mouza-vittik-khatian'],
+    surveys: ['RS'],
+    bookStyle: { layout: 'new', colorMode: 'color' },
+    batchSize: 7,
+  });
+
+  assert.equal(batchedTasks.length, 23);
+  assert.equal(batchedTasks[0].batchIndex, 1);
+  assert.equal(batchedTasks[0].batchTotal, 4);
+  assert.equal(batchedTasks[0].batchSize, 7);
+  assert.equal(batchedTasks[22].batchIndex, 4);
+  assert.equal(batchedTasks[22].batchTotal, 4);
+  assert.equal(batchedTasks[22].batchSize, 2);
+
+  // Separate Upazila calls stay strictly scoped to their own Upazila
+  const tasksUpz2 = buildBatchedQueueTasks({
+    division: div,
+    district: dist,
+    upazila: upz2,
+    mouzas: makeSyntheticMouzas(3, 'kasba'),
+    endpoints: ['mouza-vittik-khatian'],
+    surveys: ['RS'],
+    bookStyle: { layout: 'new', colorMode: 'color' },
+  });
+  assert.ok(tasksUpz2.every((t) => t.upazilaNameEn === 'Kasba'));
+  assert.ok(batchedTasks.every((t) => t.upazilaNameEn === upz1.nameEn));
+
+  // No selected Mouzas -> 0 tasks
+  const emptySelection = buildUnifiedQueueForDocumentSelection({
+    division: div,
+    district: dist,
+    upazila: upz1,
+    allMouzasForUpazila: upz1.mouzas,
+    currentSelectedMouzaIds: [],
+    endpoints: ALL_ENDPOINT_TYPES,
+    surveys: ALL_SURVEY_TYPES,
+    bookStyle: { layout: 'new', colorMode: 'color' },
+  });
+  assert.equal(emptySelection.tasks.length, 0);
+});
+
+test('mergeQueueTasksPreservingProgress is idempotent and preserves completed tasks across re-selection', () => {
+  const sample = makeSampleTasks();
+  sample[0].status = 'CACHED_INDEXEDDB';
+  sample[0].pdfVerified = true;
+  sample[0].sha256 = 'abc123';
+
+  const reBuilt = makeSampleTasks();
+  const merged1 = mergeQueueTasksPreservingProgress(sample, reBuilt);
+  const merged2 = mergeQueueTasksPreservingProgress(merged1, reBuilt);
+
+  assert.equal(merged1.length, sample.length);
+  assert.equal(merged2.length, sample.length);
+  assert.equal(merged2[0].status, 'CACHED_INDEXEDDB');
+  assert.equal(merged2[0].sha256, 'abc123');
+  assert.equal(new Set(merged2.map((t) => t.id)).size, merged2.length);
+});
+
+test('recoverStaleQueueTasks resets interrupted FETCHING_EPORCHA_TECH tasks and cancellation skips completed tasks', () => {
+  const sample = makeSampleTasks();
+  sample[0].status = 'CACHED_INDEXEDDB';
+  sample[1].status = 'FETCHING_EPORCHA_TECH';
+  sample[2].status = 'QUEUED';
+
+  const recovered = recoverStaleQueueTasks(sample);
+  assert.equal(recovered[0].status, 'CACHED_INDEXEDDB');
+  assert.equal(recovered[1].status, 'QUEUED');
+  assert.match(recovered[1].errorMessage || '', /Recovered/i);
+
+  const singleCancelled = cancelQueueTask(recovered, recovered[1].id);
+  assert.equal(singleCancelled[1].status, 'CANCELLED');
+  assert.equal(singleCancelled[0].status, 'CACHED_INDEXEDDB');
+
+  const allCancelled = cancelAllPendingTasks(singleCancelled);
+  assert.equal(allCancelled[0].status, 'CACHED_INDEXEDDB');
+  assert.equal(allCancelled[2].status, 'CANCELLED');
+  assert.equal(allCancelled[3].status, 'CANCELLED');
+});
 
 test('buildQueueTasksForUpazila auto-selects 100% of Mouzas for any Upazila', () => {
   const div = GEO_HIERARCHY[0];
@@ -207,5 +334,3 @@ test('computeQueueIntegrityHealthReport and requeueIntegrityFlaggedTasks summari
   assert.equal(updatedTasks[2].status, 'QUEUED');
   assert.equal(updatedTasks[3].status, 'QUEUED');
 });
-
-

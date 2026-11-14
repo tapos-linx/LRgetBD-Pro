@@ -22,6 +22,7 @@ import {
   Sparkles,
   Square,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import {
   ConcurrencyTunerTelemetry,
@@ -68,6 +69,8 @@ interface QueueConsoleViewProps {
   onMoveTaskPriority?: (taskId: string, direction: 'UP' | 'DOWN' | 'TOP') => void;
   onPrioritizeMouza?: (mouzaId: string) => void;
   onBulkAction?: (taskIds: string[], action: 'FORCE_FETCH' | 'DELETE' | 'MOVE_TO_TOP') => void;
+  onCancelTask?: (taskId: string) => void;
+  onCancelAllPending?: () => void;
   verifiedBlobTaskIds?: Set<string>;
   isBundlingZip: boolean;
   lastBundleStatus: string | null;
@@ -88,7 +91,6 @@ const TRANSPORT_LABELS: Record<TransportMode, string> = {
   TERMUX_LOCAL_PROXY: 'Termux Local Relay (127.0.0.1:8787)',
   CLOUDFLARE_WORKER_PROXY: 'Custom Cloudflare Worker Relay',
   DIRECT_BROWSER_FETCH: 'Direct Browser Fetch (CORS-Restricted)',
-  SCRAPFLY: 'Scrapfly Residential Proxy Pool',
 };
 
 export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
@@ -116,6 +118,8 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
   onMoveTaskPriority,
   onPrioritizeMouza,
   onBulkAction,
+  onCancelTask,
+  onCancelAllPending,
   isBundlingZip,
   lastBundleStatus,
   schedulerConfig,
@@ -288,7 +292,7 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
               Live Sequential Queue & Binary Verification Console
             </h2>
             <p className="text-xs text-slate-400 font-bn mt-0.5">
-              Polite anti-crash queue (450ms–900ms jitter) · Strict %PDF- (25 50 44 46 2D) &gt; 1,024B verification gate
+              Polite adaptive queue (7-Mouza batching) · Strict %PDF- structural parser + SHA-256 verification gate
             </p>
           </div>
 
@@ -361,6 +365,18 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                   : `Download Audit ZIP (${verifiedCount} Verified PDFs)`}
               </span>
             </button>
+
+            {onCancelAllPending && (
+              <button
+                type="button"
+                onClick={onCancelAllPending}
+                disabled={queuedCount === 0 && !effectiveIsRunning}
+                className="px-3 py-2.5 rounded-lg bg-slate-800 hover:bg-amber-950/60 hover:text-amber-300 disabled:opacity-40 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>Cancel Pending</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -1121,6 +1137,9 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                           {task.bookStyle
                             ? ` · Style: ${task.bookStyle.layout}/${task.bookStyle.colorMode}`
                             : ''}
+                          {task.batchIndex && task.batchTotal
+                            ? ` · Batch ${task.batchIndex}/${task.batchTotal}`
+                            : ''}
                         </div>
                       </td>
 
@@ -1131,6 +1150,11 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                         <div className="text-slate-400 text-[11px] mt-1 font-mono-tabular truncate">
                           {task.targetUrl}
                         </div>
+                        {task.sha256 && (
+                          <div className="text-emerald-400/90 text-[10px] mt-0.5 font-mono-tabular truncate">
+                            SHA-256: {task.sha256.slice(0, 16)}…
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 align-top">
@@ -1289,6 +1313,17 @@ export const QueueConsoleView: React.FC<QueueConsoleViewProps> = ({
                               <span>Download</span>
                             </button>
                           )}
+                          {onCancelTask &&
+                            (task.status === 'QUEUED' || task.status === 'FETCHING_EPORCHA_TECH') && (
+                              <button
+                                type="button"
+                                onClick={() => onCancelTask(task.id)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/70 hover:text-rose-300 text-slate-300 text-[11px] font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                <span>Cancel</span>
+                              </button>
+                            )}
                           <button
                             type="button"
                             onClick={() => onRunSingleTask(task.id)}

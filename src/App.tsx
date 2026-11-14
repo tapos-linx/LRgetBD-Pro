@@ -37,7 +37,6 @@ import {
   ALL_ENDPOINT_TYPES,
   ALL_SURVEY_TYPES,
   ENDPOINT_MODE_META,
-  generateTasksForMouzasAndEndpoints,
   SURVEY_LABELS,
 } from './data/geoHierarchy';
 import {
@@ -62,8 +61,11 @@ import {
 } from './services/storageService';
 import {
   applyTaskRetryBudgetPolicy,
+  buildBatchedQueueTasks,
   calculatePoliteJitterDelay,
   calculateQueueProgress,
+  cancelAllPendingTasks,
+  cancelQueueTask,
   createInitialConcurrencyTelemetry,
   createInitialSmartPauseState,
   evaluateAutoConcurrencyStep,
@@ -71,9 +73,11 @@ import {
   evaluateWorkWindowStatus,
   generateManifestAuditCsv,
   getRegimeForConcurrency,
+  mergeQueueTasksPreservingProgress,
   moveQueueTaskByOffset,
   prioritizeMouzaInQueue,
   processSingleQueueTask,
+  recoverStaleQueueTasks,
   reorderQueueTasks,
   requeueIntegrityFlaggedTasks,
   retryFailedTasks,
@@ -129,9 +133,9 @@ export default function App() {
   const [mapSheetInput, setMapSheetInput] = useState<number>(1);
   const [enqueueFeedback, setEnqueueFeedback] = useState<string | null>(null);
 
-  // Queue, Proxy & Storage State
+  // Queue, Proxy & Storage State (recover any stale in-flight tasks from previous crash/reload)
   const [tasks, setTasks] = useState<QueueTask[]>(() => {
-    return loadPersistedQueue();
+    return recoverStaleQueueTasks(loadPersistedQueue());
   });
 
   const [proxyConfig, setProxyConfig] = useState<ProxyConfig>(() =>
@@ -167,44 +171,57 @@ export default function App() {
     checked: boolean;
   }>({ reachable: true, status: 200, latencyMs: 0, checked: false });
 
-  // Automatic Queue Generation upon discovery/selection change (Phase 5 & 6)
+  // Automatic Queue Generation upon discovery/selection change (7-Mouza batching + idempotent progress preservation)
   useEffect(() => {
-    if (!geo.activeDivision || !geo.activeDistrict || !geo.activeUpazila || geo.selectedCount === 0) {
-      if (geo.selectedCount === 0 && tasks.length > 0) {
-        setTasks([]);
-        savePersistedQueue([]);
-      }
+    if (!geo.activeDivision || !geo.activeDistrict || !geo.activeUpazila) {
       return;
     }
 
-    const builtTasks = generateTasksForMouzasAndEndpoints({
-      divisionNameEn: geo.activeDivision.nameEn,
-      divisionSlug: geo.activeDivision.eporchaSlug,
-      districtNameEn: geo.activeDistrict.nameEn,
-      districtNameBn: geo.activeDistrict.nameBn,
-      districtSlug: geo.activeDistrict.eporchaSlug,
-      upazilaNameEn: geo.activeUpazila.nameEn,
-      upazilaNameBn: geo.activeUpazila.nameBn,
-      upazilaSlug: geo.activeUpazila.eporchaSlug,
-      mouzas: geo.allMouzasForUpazila.filter(m => geo.selectedMouzaIds.includes(m.id)),
+    const selectedMouzas = geo.allMouzasForUpazila.filter((m) =>
+      geo.selectedMouzaIds.includes(m.id)
+    );
+
+    const builtTasks = buildBatchedQueueTasks({
+      division: geo.activeDivision,
+      district: geo.activeDistrict,
+      upazila: geo.activeUpazila,
+      mouzas: selectedMouzas,
       endpoints: selectedEndpoints,
       surveys: selectedSurveys,
       bookStyle,
       khatianNo: khatianInput.trim() || 'ALL',
       mapSheetNo: mapSheetInput || 1,
+      batchSize: 7,
     });
 
-    setTasks(builtTasks);
-    savePersistedQueue(builtTasks);
-    setEnqueueFeedback(`Queue updated with ${builtTasks.length} tasks for ${geo.selectedCount} Mouzas.`);
+    setTasks((prev) => {
+      const merged = mergeQueueTasksPreservingProgress(prev, builtTasks);
+      savePersistedQueue(merged);
+      return merged;
+    });
+
+    const batchCount =
+      selectedMouzas.length > 0 ? Math.ceil(selectedMouzas.length / 7) : 0;
+    if (builtTasks.length === 0) {
+      setEnqueueFeedback(
+        'No active tasks selected. Choose at least 1 Mouza, 1 Document Mode, and 1 Survey.'
+      );
+    } else {
+      setEnqueueFeedback(
+        `Queue updated with ${builtTasks.length} tasks across ${batchCount} seven-Mouza batch${batchCount === 1 ? '' : 'es'} (${selectedMouzas.length} Mouzas).`
+      );
+    }
   }, [
-    geo.activeUpazila?.id, 
-    geo.selectedMouzaIds, 
-    selectedEndpoints, 
-    selectedSurveys, 
-    bookStyle, 
-    khatianInput, 
-    mapSheetInput
+    geo.activeDivision,
+    geo.activeDistrict,
+    geo.activeUpazila,
+    geo.allMouzasForUpazila,
+    geo.selectedMouzaIds,
+    selectedEndpoints,
+    selectedSurveys,
+    bookStyle,
+    khatianInput,
+    mapSheetInput,
   ]);
 
   // Restart queue from Queue Index 0
@@ -214,7 +231,7 @@ export default function App() {
       ...t,
       status: 'QUEUED' as const,
       pdfVerified: false,
-      retries: 0,
+      retryCount: 0,
       errorMessage: undefined,
     }));
     setTasks(resetTasks);
@@ -261,11 +278,16 @@ export default function App() {
   };
 
   const handleToggleEndpointType = (modeKey: EporchaEndpointType) => {
-    setSelectedEndpoints(prev => 
+    setSelectedEndpoints((prev) =>
       prev.includes(modeKey)
-        ? prev.length > 1 ? prev.filter(k => k !== modeKey) : prev
+        ? prev.filter((k) => k !== modeKey)
         : [...prev, modeKey]
     );
+    setActiveTaskId(null);
+  };
+
+  const handleClearAllDocumentTypes = () => {
+    setSelectedEndpoints([]);
     setActiveTaskId(null);
   };
 
@@ -451,7 +473,7 @@ export default function App() {
                   ...t,
                   status: 'QUEUED' as const,
                   pdfVerified: false,
-                  retries: 0,
+                  retryCount: 0,
                   errorMessage: undefined,
                 }
               : t
@@ -475,11 +497,19 @@ export default function App() {
   );
 
   const toggleSurveyType = (srv: SurveyType) => {
-    setSelectedSurveys(prev => 
-      prev.includes(srv)
-        ? prev.length > 1 ? prev.filter(s => s !== srv) : prev
-        : [...prev, srv]
+    setSelectedSurveys((prev) =>
+      prev.includes(srv) ? prev.filter((s) => s !== srv) : [...prev, srv]
     );
+    setActiveTaskId(null);
+  };
+
+  const handleSelectAllSurveys = () => {
+    setSelectedSurveys([...ALL_SURVEY_TYPES]);
+    setActiveTaskId(null);
+  };
+
+  const handleClearAllSurveys = () => {
+    setSelectedSurveys([]);
     setActiveTaskId(null);
   };
 
@@ -770,6 +800,27 @@ export default function App() {
     const refreshedIds = await getAllVerifiedBlobTaskIds();
     setVerifiedBlobTaskIds(new Set(refreshedIds));
   };
+
+  const handleCancelTask = useCallback((taskId: string) => {
+    inFlightTaskIdsRef.current.delete(taskId);
+    setTasks((prev) => {
+      const next = cancelQueueTask(prev, taskId);
+      savePersistedQueue(next);
+      return next;
+    });
+  }, []);
+
+  const handleCancelAllPending = useCallback(() => {
+    setIsQueueRunning(false);
+    inFlightTaskIdsRef.current.clear();
+    setActiveTaskId(null);
+    setTasks((prev) => {
+      const next = cancelAllPendingTasks(prev);
+      savePersistedQueue(next);
+      return next;
+    });
+    setEnqueueFeedback('Cancelled all pending queued tasks.');
+  }, []);
 
   const handleClearQueue = async () => {
     setIsQueueRunning(false);
@@ -1062,7 +1113,15 @@ export default function App() {
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all flex items-center gap-2"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Fetch ALL Modes (Total Coverage)</span>
+                    <span>Select All 6 Modes &amp; Fetch</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleClearAllDocumentTypes}
+                    disabled={selectedEndpoints.length === 0}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 text-xs font-medium transition-all"
+                  >
+                    Clear All Modes
                   </button>
                   <button
                     type="button"
@@ -1110,9 +1169,25 @@ export default function App() {
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-3">
-                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-widest">
-                      Active Survey Records
-                    </label>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                        Active Survey Records ({selectedSurveys.length}/5)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleSelectAllSurveys}
+                        className="text-[10px] font-semibold text-emerald-400 hover:underline"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearAllSurveys}
+                        className="text-[10px] font-semibold text-slate-400 hover:text-white hover:underline"
+                      >
+                        Clear All
+                      </button>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       {ALL_SURVEY_TYPES.map((srv) => {
                         const isSelected = selectedSurveys.includes(srv);
@@ -1472,6 +1547,8 @@ export default function App() {
               onPrioritizeMouza={handlePrioritizeMouza}
               onDownloadTask={handleDownloadIndividualTask}
               onBulkAction={handleBulkAction}
+              onCancelTask={handleCancelTask}
+              onCancelAllPending={handleCancelAllPending}
               verifiedBlobTaskIds={verifiedBlobTaskIds}
               onBatchRename={() => setBatchRenameModalOpen(true)}
               schedulerConfig={schedulerConfig}

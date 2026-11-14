@@ -31,6 +31,72 @@ export function hasPdfMagicSignature(bytes: Uint8Array): boolean {
   return true;
 }
 
+export function hasPdfStructuralMarkers(bytes: Uint8Array): {
+  valid: boolean;
+  reason?: string;
+} {
+  if (!hasPdfMagicSignature(bytes)) {
+    return { valid: false, reason: 'Missing %PDF- magic header' };
+  }
+
+  const headText = new TextDecoder('latin1').decode(
+    bytes.subarray(0, Math.min(bytes.length, 32))
+  );
+  if (!/^%PDF-[12]\.\d/.test(headText)) {
+    return {
+      valid: false,
+      reason: 'Invalid PDF version banner (expected %PDF-1.x or %PDF-2.x)',
+    };
+  }
+
+  const fullText = new TextDecoder('latin1').decode(bytes);
+  const hasObjects = /\b\d+\s+\d+\s+obj\b/.test(fullText) && /\bendobj\b/.test(fullText);
+  if (!hasObjects) {
+    return {
+      valid: false,
+      reason: 'Structurally invalid PDF: missing indirect object definitions (obj/endobj)',
+    };
+  }
+
+  const hasXref = /\bxref\b/.test(fullText) || /\/Type\s*\/XRef\b/.test(fullText);
+  if (!hasXref) {
+    return {
+      valid: false,
+      reason: 'Structurally invalid PDF: missing cross-reference table or XRef stream',
+    };
+  }
+
+  const tailSlice = bytes.subarray(Math.max(0, bytes.length - 2048));
+  const tailText = new TextDecoder('latin1').decode(tailSlice);
+  if (!/\bstartxref\b/.test(tailText) || !/%%EOF\b/.test(tailText)) {
+    return {
+      valid: false,
+      reason: 'Structurally incomplete PDF: missing startxref or %%EOF trailer marker',
+    };
+  }
+
+  return { valid: true };
+}
+
+export function isStructurallyValidPdf(bytes: Uint8Array): boolean {
+  return (
+    bytes.byteLength > MIN_VALID_PDF_BYTES &&
+    hasPdfMagicSignature(bytes) &&
+    hasPdfStructuralMarkers(bytes).valid
+  );
+}
+
+export async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
+  if (typeof globalThis.crypto?.subtle?.digest === 'function') {
+    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  const { createHash } = await import('node:crypto');
+  return createHash('sha256').update(new Uint8Array(buffer)).digest('hex');
+}
+
 export function extractStructuredRecordsFromText(
   text: string,
   ctx: ValidationContext
@@ -39,7 +105,7 @@ export function extractStructuredRecordsFromText(
   const trimmed = text.trim();
   const nowIso = new Date().toISOString();
 
-  // 1. Check if valid JSON array or object with khatian/dag rows
+  // 1. Parse JSON arrays/objects containing real khatian/dag rows
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       const parsed = JSON.parse(trimmed);
@@ -92,7 +158,7 @@ export function extractStructuredRecordsFromText(
     }
   }
 
-  // 2. Parse HTML table rows (`<tr>...<td>...</td>...</tr>`) if present in eporcha.tech HTML response
+  // 2. Parse actual HTML table rows (`<tr>...<td>...</td>...</tr>`) from eporcha.tech HTML response
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
   const stripTags = (html: string) =>
@@ -138,39 +204,6 @@ export function extractStructuredRecordsFromText(
     }
   }
 
-  // 3. Also discover any embedded document/resource links or Mouza endpoint references found on the URL
-  if (records.length === 0 && trimmed.length > 0) {
-    const titleMatch = trimmed.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const pageTitle = titleMatch ? stripTags(titleMatch[1]) : '';
-    const linkRegex = /href=["']([^"']+\.(?:pdf|json|csv|xlsx?|docx?|png|jpg)|\/(?:survey-khatian|namjari-khatian|mouza-vittik-khatian|mouza-vittik-dag|mouza-map)[^"']*)["']/gi;
-    const discoveredLinks = new Set<string>();
-    let linkMatch: RegExpExecArray | null;
-    while ((linkMatch = linkRegex.exec(trimmed)) !== null) {
-      discoveredLinks.add(linkMatch[1]);
-    }
-    if (pageTitle || discoveredLinks.size > 0) {
-      records.push({
-        recordId: `${ctx.mouzaJlNo}_${ctx.surveyType}_URL_RECORD`,
-        districtName: ctx.districtName,
-        upazilaName: ctx.upazilaName,
-        unionName: ctx.unionName,
-        mouzaNameEn: ctx.mouzaNameEn,
-        mouzaNameBn: ctx.mouzaNameBn,
-        mouzaJlNo: ctx.mouzaJlNo,
-        surveyType: ctx.surveyType,
-        khatianNo: `JL-${ctx.mouzaJlNo}`,
-        ownerName: pageTitle || `${ctx.mouzaNameBn} (${ctx.mouzaNameEn}) Portal Record`,
-        dagNo:
-          discoveredLinks.size > 0
-            ? `${discoveredLinks.size} Endpoint/Doc Links Found`
-            : 'Full Mouza Stream',
-        totalLandAcres: 'All Mouza Dags',
-        sourceUrl: ctx.sourceUrl,
-        extractedAt: nowIso,
-      });
-    }
-  }
-
   return records;
 }
 
@@ -181,29 +214,67 @@ export function inspectBinaryPayload(
   const byteLength = buffer.byteLength;
   const bytes = new Uint8Array(buffer);
   const magicBytesHex = bytesToHex(bytes, 5);
-  const startsWithPdf = hasPdfMagicSignature(bytes);
 
-  if (startsWithPdf && byteLength > MIN_VALID_PDF_BYTES) {
+  if (byteLength === 0) {
     return {
-      isValidPdf: true,
-      byteLength,
-      magicBytesHex,
+      isValidPdf: false,
+      headerValid: false,
+      structurallyValid: false,
+      checksumRecorded: false,
+      byteLength: 0,
+      magicBytesHex: 'EMPTY',
       isHtmlPayload: false,
       isJsonPayload: false,
       extractedRecords: [],
-      diagnosticReason: `Verified %PDF- binary header (${magicBytesHex}) with ${byteLength.toLocaleString()} bytes (> 1,024B gate).`,
+      diagnosticReason: 'Rejected empty payload (0 bytes received).',
     };
   }
+
+  const startsWithPdf = hasPdfMagicSignature(bytes);
 
   if (startsWithPdf && byteLength <= MIN_VALID_PDF_BYTES) {
     return {
       isValidPdf: false,
+      headerValid: true,
+      structurallyValid: false,
+      checksumRecorded: false,
       byteLength,
       magicBytesHex,
       isHtmlPayload: false,
       isJsonPayload: false,
       extractedRecords: [],
       diagnosticReason: `Rejected truncated PDF: header starts with %PDF- (${magicBytesHex}) but size is only ${byteLength} bytes (must exceed ${MIN_VALID_PDF_BYTES} bytes).`,
+    };
+  }
+
+  if (startsWithPdf) {
+    const structuralCheck = hasPdfStructuralMarkers(bytes);
+    if (structuralCheck.valid) {
+      return {
+        isValidPdf: true,
+        headerValid: true,
+        structurallyValid: true,
+        checksumRecorded: false,
+        byteLength,
+        magicBytesHex,
+        isHtmlPayload: false,
+        isJsonPayload: false,
+        extractedRecords: [],
+        diagnosticReason: `Verified %PDF- header (${magicBytesHex}) and structural PDF markers (obj/endobj, xref, startxref, %%EOF) across ${byteLength.toLocaleString()} bytes.`,
+      };
+    }
+
+    return {
+      isValidPdf: false,
+      headerValid: true,
+      structurallyValid: false,
+      checksumRecorded: false,
+      byteLength,
+      magicBytesHex,
+      isHtmlPayload: false,
+      isJsonPayload: false,
+      extractedRecords: [],
+      diagnosticReason: structuralCheck.reason || 'Rejected structurally corrupt PDF.',
     };
   }
 
@@ -230,6 +301,9 @@ export function inspectBinaryPayload(
     const pageTitle = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : 'HTML Document';
     return {
       isValidPdf: false,
+      headerValid: false,
+      structurallyValid: false,
+      checksumRecorded: false,
       byteLength,
       magicBytesHex: magicBytesHex || 'EMPTY',
       isHtmlPayload: true,
@@ -245,6 +319,9 @@ export function inspectBinaryPayload(
   if (isJsonPayload) {
     return {
       isValidPdf: false,
+      headerValid: false,
+      structurallyValid: false,
+      checksumRecorded: false,
       byteLength,
       magicBytesHex: magicBytesHex || 'EMPTY',
       isHtmlPayload: false,
@@ -259,11 +336,31 @@ export function inspectBinaryPayload(
 
   return {
     isValidPdf: false,
+    headerValid: false,
+    structurallyValid: false,
+    checksumRecorded: false,
     byteLength,
     magicBytesHex: magicBytesHex || 'EMPTY',
     isHtmlPayload: false,
     isJsonPayload: false,
     extractedRecords: [],
-    diagnosticReason: `Invalid binary header (${magicBytesHex || '0 bytes'}): expected 25 50 44 46 2D (%PDF-) and > 1,024 bytes.`,
+    diagnosticReason: `Invalid binary header (${magicBytesHex || '0 bytes'}): expected 25 50 44 46 2D (%PDF-), structural EOF/xref markers, and > 1,024 bytes.`,
   };
 }
+
+export async function inspectBinaryPayloadWithChecksum(
+  buffer: ArrayBuffer,
+  ctx: ValidationContext
+): Promise<BinaryValidationResult> {
+  const base = inspectBinaryPayload(buffer, ctx);
+  if (buffer.byteLength === 0) {
+    return base;
+  }
+  const sha256 = await computeSha256Hex(buffer);
+  return {
+    ...base,
+    sha256,
+    checksumRecorded: true,
+  };
+}
+

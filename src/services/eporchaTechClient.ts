@@ -7,7 +7,7 @@ import {
   QueueTask,
   TransportMode,
 } from '../types/land';
-import { inspectBinaryPayload } from './binaryValidator';
+import { inspectBinaryPayloadWithChecksum } from './binaryValidator';
 
 export interface EporchaFetchOutcome {
   ok: boolean;
@@ -15,6 +15,9 @@ export interface EporchaFetchOutcome {
   transportUsed: TransportMode;
   buffer?: ArrayBuffer;
   validation?: BinaryValidationResult;
+  finalUrl?: string;
+  mimeType?: string;
+  retrievedAt?: string;
   errorMessage?: string;
 }
 
@@ -50,7 +53,13 @@ function stringToArrayBuffer(str: string): ArrayBuffer {
 
 const clientPayloadCache = new Map<
   string,
-  { status: number; buffer: ArrayBuffer; cachedAt: number }
+  {
+    status: number;
+    buffer: ArrayBuffer;
+    finalUrl: string;
+    mimeType: string;
+    cachedAt: number;
+  }
 >();
 const CLIENT_CACHE_TTL_MS = 10 * 60 * 1000;
 
@@ -75,7 +84,7 @@ export async function fetchFromEporchaTech(
     sourceUrl: task.targetUrl,
   };
 
-  // 1. Native Android APK Path via CapacitorHttp (100% CORS-Free on Android)
+  // 1. Native Android APK Path via CapacitorHttp
   if (activeTransport === 'CAPACITOR_NATIVE_HTTP') {
     try {
       const response = await CapacitorHttp.request({
@@ -102,13 +111,22 @@ export async function fetchFromEporchaTech(
         buffer = stringToArrayBuffer(JSON.stringify(response.data ?? ''));
       }
 
-      const validation = inspectBinaryPayload(buffer, validationContext);
+      const validation = await inspectBinaryPayloadWithChecksum(buffer, validationContext);
+      const mimeType =
+        response.headers?.['content-type'] ||
+        response.headers?.['Content-Type'] ||
+        'application/octet-stream';
+      const retrievedAt = new Date().toISOString();
+
       return {
         ok: response.status >= 200 && response.status < 300,
         httpStatus: response.status,
         transportUsed: 'CAPACITOR_NATIVE_HTTP',
         buffer,
         validation,
+        finalUrl: response.url || task.targetUrl,
+        mimeType,
+        retrievedAt,
       };
     } catch (error) {
       return {
@@ -140,30 +158,28 @@ export async function fetchFromEporchaTech(
       };
     }
     requestUrl = `${base}${encodeURIComponent(task.targetUrl)}`;
-  } else if (activeTransport === 'SCRAPFLY') {
-    const apiKey = import.meta.env.VITE_SCRAPFLY_API_KEY;
-    if (!apiKey) {
-      return {
-        ok: false,
-        httpStatus: 0,
-        transportUsed: 'SCRAPFLY',
-        errorMessage: 'Scrapfly API key not configured.',
-      };
-    }
-    const encodedTargetUrl = encodeURIComponent(task.targetUrl);
-    requestUrl = `https://api.scrapfly.io/scrape?key=${apiKey}&url=${encodedTargetUrl}&format=raw&proxy_pool=public_residential_pool`;
   }
 
   try {
     const cached = clientPayloadCache.get(task.targetUrl);
-    if (cached && Date.now() - cached.cachedAt < CLIENT_CACHE_TTL_MS && cached.buffer.byteLength > 0) {
-      const validation = inspectBinaryPayload(cached.buffer, validationContext);
+    if (
+      cached &&
+      Date.now() - cached.cachedAt < CLIENT_CACHE_TTL_MS &&
+      cached.buffer.byteLength > 0
+    ) {
+      const validation = await inspectBinaryPayloadWithChecksum(
+        cached.buffer,
+        validationContext
+      );
       return {
         ok: cached.status >= 200 && cached.status < 300,
         httpStatus: cached.status,
         transportUsed: activeTransport,
         buffer: cached.buffer,
         validation,
+        finalUrl: cached.finalUrl,
+        mimeType: cached.mimeType,
+        retrievedAt: new Date(cached.cachedAt).toISOString(),
       };
     }
 
@@ -172,6 +188,7 @@ export async function fetchFromEporchaTech(
 
     const response = await fetch(requestUrl, {
       method: 'GET',
+      redirect: 'follow',
       headers: {
         Accept: 'application/pdf,application/json,text/html,*/*',
       },
@@ -183,6 +200,13 @@ export async function fetchFromEporchaTech(
     const effectiveStatus = upstreamStatusHeader
       ? parseInt(upstreamStatusHeader, 10)
       : response.status;
+    const finalUrl =
+      response.headers.get('X-Upstream-Final-Url') ||
+      response.url ||
+      task.targetUrl;
+    const mimeType =
+      response.headers.get('Content-Type') || 'application/octet-stream';
+    const retrievedAt = new Date().toISOString();
 
     const buffer = await response.arrayBuffer();
     if (buffer.byteLength > 0) {
@@ -193,11 +217,13 @@ export async function fetchFromEporchaTech(
       clientPayloadCache.set(task.targetUrl, {
         status: effectiveStatus,
         buffer,
+        finalUrl,
+        mimeType,
         cachedAt: Date.now(),
       });
     }
 
-    const validation = inspectBinaryPayload(buffer, validationContext);
+    const validation = await inspectBinaryPayloadWithChecksum(buffer, validationContext);
 
     return {
       ok: effectiveStatus >= 200 && effectiveStatus < 300,
@@ -205,6 +231,9 @@ export async function fetchFromEporchaTech(
       transportUsed: activeTransport,
       buffer,
       validation,
+      finalUrl,
+      mimeType,
+      retrievedAt,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Browser network or CORS error';
@@ -249,26 +278,20 @@ export async function extractPdfUrl(
   docType: string,
   portalPageUrl: string
 ): Promise<string> {
-  const apiKey = import.meta.env.VITE_SCRAPFLY_API_KEY;
-  if (!apiKey) {
-    throw new Error('Scrapfly API key not configured.');
-  }
-
-  const encodedTargetUrl = encodeURIComponent(portalPageUrl);
-  const scrapflyUrl = `https://api.scrapfly.io/scrape?key=${apiKey}&url=${encodedTargetUrl}&render_js=true&proxy_pool=public_residential_pool`;
-
-  const response = await fetch(scrapflyUrl);
+  const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(portalPageUrl)}`;
+  const response = await fetch(proxyUrl);
   if (!response.ok) {
-    throw new Error(`Scrapfly HTML fetch failed: HTTP ${response.status}`);
+    throw new Error(`eporcha.tech HTML fetch failed: HTTP ${response.status}`);
   }
 
-  const jsonResponse = await response.json();
-  const rawHtml = jsonResponse.result.content;
-
+  const rawHtml = await response.text();
   const $ = cheerio.load(rawHtml);
   const anchorTags = $('a[href]');
 
   let targetPdfUrl: string | null = null;
+  const originBase = portalPageUrl.startsWith('http')
+    ? portalPageUrl
+    : 'https://eporcha.tech/';
 
   anchorTags.each((_, el) => {
     const linkText = $(el).text().trim();
@@ -281,10 +304,15 @@ export async function extractPdfUrl(
       className.includes('download-pdf');
 
     if (isTargetDoc && href.toLowerCase().endsWith('.pdf')) {
-      targetPdfUrl = href.startsWith('http')
-        ? href
-        : `https://www.target-land-portal.gov.bd${href}`;
-      return false; // Stop searching
+      try {
+        const resolved = new URL(href, originBase);
+        if (resolved.hostname.endsWith('eporcha.tech')) {
+          targetPdfUrl = resolved.toString();
+          return false;
+        }
+      } catch {
+        // Ignore invalid href
+      }
     }
   });
 
@@ -294,4 +322,5 @@ export async function extractPdfUrl(
 
   return targetPdfUrl;
 }
+
 

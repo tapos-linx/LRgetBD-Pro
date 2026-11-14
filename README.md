@@ -1,82 +1,74 @@
-# LR Mass Downloader (LRgetBD Pro v2.1)
+# LRgetBD-Pro (v2.1.0)
 
-[![Build, Sign & Release LRgetBD-Pro APK](https://github.com/tapos-linx/LR_Mass_Downloader/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tapos-linx/LR_Mass_Downloader/actions/workflows/build-apk.yml)
-[![Latest Release](https://img.shields.io/github/v/release/tapos-linx/LR_Mass_Downloader?label=Latest%20APK&color=10B981)](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest)
-[![Download LRgetBD-Pro.apk](https://img.shields.io/badge/Download_Android_APK-LRgetBD--Pro.apk-059669?style=for-the-badge&logo=android&logoColor=white)](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk)
+[![Build Android Debug APK](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml)
 
-**LRgetBD Pro** is a production-grade Android (Jetpack Compose, Room v3, MediaStore Scoped Storage, Foreground `dataSync` Service) and Web/Capacitor application engineered for automated bulk-fetching, `%PDF-` binary verification, relational indexing, and ZIP archival of Bangladeshi land records (**CS, SA, RS, BS/BRS Khatians, Full Mouza Khatian Books, Full Mouza Dag Books, Namjari Khatians, and Mouza Maps**) from the open-access **`https://eporcha.tech`** portal.
+**LRgetBD-Pro** (`bd.landarchive.lrgetbdpro`, v2.1.0) is a **React 19 + TypeScript + Vite 8 + Express + Capacitor 8** web and Android application for structured lookup, binary verification, indexing, and ZIP archival of Bangladeshi land records (**Survey Khatians, Namjari Khatians, Mouza Khatian Books, Mouza Dag Books, Mouza Maps, and Khatian Index** across **CS, SA, RS, BS, and Mutation** surveys) from **`https://eporcha.tech`**.
 
 ---
 
-## 📲 Direct Android APK Download (Zero-404 Standardized Links)
+## Architecture Overview
 
-All GitHub Actions release artifacts and in-app updater links are strictly standardized to **`LRgetBD-Pro.apk`**:
-
-* **Primary Direct APK Download (`tapos-linx/LR_Mass_Downloader`):**  
-  👉 **[https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk](https://github.com/tapos-linx/LR_Mass_Downloader/releases/latest/download/LRgetBD-Pro.apk)**
-* **Mirror Repository APK Download (`tapos-linx/LRgetBD-Pro`):**  
-  👉 **[https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk](https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk)**
-* **All Releases & Changelog:**  
-  👉 **[https://github.com/tapos-linx/LR_Mass_Downloader/releases](https://github.com/tapos-linx/LR_Mass_Downloader/releases)**
-* **GitHub Actions Build Pipeline:**  
-  👉 **[https://github.com/tapos-linx/LR_Mass_Downloader/actions](https://github.com/tapos-linx/LR_Mass_Downloader/actions)**
+- **Active Web & Android Application:** Built with React 19, TypeScript, Vite 8, Tailwind CSS v4, and Express (`server.ts`), packaged for Android using **Capacitor 8** inside the **`android/`** Gradle project (`applicationId "bd.landarchive.lrgetbdpro"`, `versionCode 1`, `versionName "2.1.0"`).
+- **Separate Root `/app/` Directory:** The repository also contains an uncompiled Kotlin/Jetpack Compose source tree under root `/app/`. It is **not** part of the Gradle/Capacitor build packaged into the APK and is preserved untouched as reference/legacy native source.
+- **6-Document Framework:** Requirements, state machine, UI specification, technical contracts, storage schema, and implementation roadmap live in `/docs/01_PRD.md` through `/docs/06_Plan.md`.
+- **Android Debug APK CI Delivery:** `.github/workflows/build-apk.yml` builds and validates the **debug-signed** APK (`LRgetBD-Pro-debug.apk`), `LRgetBD-Pro-debug.apk.sha256`, and `build-metadata.json` as GitHub Actions workflow artifacts on pushes and pull requests to `main`. Check the latest workflow run in the [Actions tab](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml).
 
 ---
 
-## ⚙️ User Setup, Transport & Android Permissions Guide
+## Supported Open-Access Endpoints (`https://eporcha.tech`)
 
-### 1. Proxy / Scrapfly Relay & Direct `eporcha.tech` Configuration
-* **Direct Open-Access Mode (Default):** On Android (`CapacitorHttp` / Native `HttpURLConnection`), requests connect directly to `https://eporcha.tech` without browser CORS restrictions.
-* **Scrapfly / Custom Relay Configuration (Optional for High-Volume IP Rotation):**
-  * Copy `.env.example` to `.env` for server-side relay or select **Transport Mode** inside the **Live Queue Console** (`Server Express Relay`, `Capacitor Native HTTP`, `Termux Local Relay 127.0.0.1:8787`, `Cloudflare Worker Relay`, or `Scrapfly Residential Proxy Pool`).
-  * All network requests enforce a **3x Exponential Backoff** (`1s → 2s → 4s`) and a **Zero Hallucination `%PDF-` Gate** (`25 50 44 46 2D` header + `> 1,024 bytes`).
-
-### 2. Android 10–14 Permissions & Scoped Storage Architecture
-* **Android 13+ (`API 33+`) Notification Permission (`POST_NOTIFICATIONS`):**
-  * When you tap **Start Queue**, the app automatically requests `android.permission.POST_NOTIFICATIONS` so the `QueueDownloadService` foreground notification (`Pause` / `Resume` / `Cancel`) remains visible in the notification shade.
-* **Android 14 (`API 34+`) Foreground Service (`FOREGROUND_SERVICE_DATA_SYNC`):**
-  * Declared with `android:foregroundServiceType="dataSync"` and promoted via `ServiceCompat.startForeground(..., ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)` to prevent OS background termination when the app is minimized or swiped away.
-* **Scoped Storage (`MediaStore.Downloads` — Zero Legacy Storage Permission Needed on Android 10+):**
-  * Verified PDFs are written directly to `Download/LRgetBD-Pro/` using `MediaStore.Downloads.EXTERNAL_CONTENT_URI` and `IS_PENDING = 1 -> 0`.
-  * If you reinstall the app and delete a previously downloaded PDF that the app no longer owns, Android 10 (`RecoverableSecurityException`) and Android 11–14 (`MediaStore.createDeleteRequest`) automatically display a native system confirmation dialog via `IntentSender`.
-
----
-
-## 🌐 Supported Open-Access Endpoints (`https://eporcha.tech`)
-
-| Mode | Endpoint URL | Capability |
+| Mode | Endpoint Path | Capability |
 | :--- | :--- | :--- |
-| **1. Mouza Full Khatian Book** | `https://eporcha.tech/mouza-vittik-khatian` | Downloads the complete Mouza Khatian Book PDF (`পূর্ণ মৌজা খতিয়ান বই PDF`) in New/Old and Color/B&W formats. |
-| **2. Mouza Full Dag Book** | `https://eporcha.tech/mouza-vittik-dag` | Downloads the complete Mouza Dag Book PDF (`পূর্ণ মৌজা দাগ বই PDF`) mapping every serial Dag to its Khatian numbers. |
-| **3. Survey Khatian** | `https://eporcha.tech/survey-khatian` | Cascading lookup and extraction for **CS, SA, RS, and BS/BRS** Khatians by Mouza, JL No., Khatian No., Dag No., or Owner Name. |
-| **4. Namjari Khatian** | `https://eporcha.tech/namjari-khatian` | Mutation / Namjari Khatian lookup and download. |
-| **5. Mouza Map PDF** | `https://eporcha.tech/mouza-map` | Mouza Map sheet lookup and PDF/Image archival. |
+| **1. Mouza Full Khatian Book** | `/mouza-vittik-khatian` | Downloads Full Mouza Khatian Book PDF (`পূর্ণ মৌজা খতিয়ান বই PDF`) in New/Old layout and Color/B&W modes. |
+| **2. Mouza Full Dag Book** | `/mouza-vittik-dag` | Downloads Full Mouza Dag Book PDF (`পূর্ণ মৌজা দাগ বই PDF`). |
+| **3. Survey Khatian** | `/survey-khatian` | Lookup and extraction for **CS, SA, RS, and BS** Khatians. |
+| **4. Namjari Khatian** | `/namjari-khatian` | Mutation / Namjari Khatian lookup and download (`MUTATION`). |
+| **5. Mouza Map PDF** | `/mouza-map` | Mouza Map sheet lookup and archival by sheet index. |
+| **6. Khatian Index** | `/khatian-index` | Complete Khatian Summary Index lookup (`খতিয়ান সূচিপত্র`). |
 
 ---
 
-## 🏗️ 6-Document Architecture Framework
+## Key Behavioral & Verification Guarantees
 
-1. **`/docs/01_PRD.md`:** Product Requirements & Geographic Scope (prioritizing **Brahmanbaria District** — **Nabinagar Upazila**, **20-No Kaitala South Union**, **Goalai / গোয়ালী**, **Kaitala / কাইতলা**, and **Cumilla District**).
-2. **`/docs/02_AppFlow.md`:** Cascading Filter State Machine & 100% Auto-Mouza Selection workflow.
-3. **`/docs/03_UI_Spec.md`:** Material Design 3 (MD3) Bilingual UI Specification.
-4. **`/docs/04_TRD.md`:** Technical Requirements, Anti-Crash Sequential Queue Engine, and `%PDF-` Magic-Byte Binary Validator.
-5. **`/docs/05_Schema.md`:** Authoritative Geographic Hierarchy (`Division -> District -> Upazila -> Union -> Mouza`), Room v3 Relational Schema (`DownloadedRecordEntity` + `RecordWithMouza`), and `IndexedDB` Storage Schema.
-6. **`/docs/06_Plan.md`:** 4-Phase Modular Implementation & Self-Healing GitHub Actions APK Pipeline.
+- **Administrative Flow & Provenance:** Cascading selection (`Division → District → Upazila → Mouza`) enforces exact parent-district matching and distinguishes live portal responses (`LIVE_SOURCE`) from the bundled local dataset (`LOCAL_DATASET`) and errors (`FAILED` / `NOT_FOUND`). Saved Firestore geographic records default to `UNVERIFIED` until explicitly verified.
+- **Seven-Mouza Queue Batching:** Selected unique Mouzas within an Upazila are chunked into batches of **7 Mouzas** (with a smaller final remainder) using composite task IDs, idempotent progress preservation across re-selection, crash/reload recovery of interrupted tasks, cancellation, and transient-only auto-retries.
+- **Structural PDF & Checksum Verification:** Candidate downloads require both the `%PDF-` header (`25 50 44 46 2D`), structural PDF markers (`obj`/`endobj`, `xref`/`trailer`/`startxref`, `%%EOF`), size `> 1,024` bytes, and SHA-256 digest computation over the exact saved bytes. HTML login/error responses and JSON error bodies are rejected cleanly.
+- **Transport Modes:** Supports Capacitor Native HTTP (`CapacitorHttp`) inside Android, built-in Express proxy (`/api/eporcha-proxy`), optional local Termux relay (`http://127.0.0.1:8787/proxy?url=`), or user-configured Cloudflare Worker relay.
 
 ---
 
-## 🚀 Local Development & Build
+## Local Development, Testing & Android Debug Build
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/tapos-linx/LR_Mass_Downloader.git
-cd LR_Mass_Downloader
+git clone https://github.com/tapos-linx/LRgetBD-Pro.git
+cd LRgetBD-Pro
 
-# 2. Install & build the Web / Capacitor bundle
-npm install --legacy-peer-deps
+# 2. Install exact locked dependencies
+bun install --frozen-lockfile
+
+# 3. Typecheck and run all unit tests
+npm run lint
+npm test
+
+# 4. Build web assets & sync Capacitor Android project
 npm run build
+npx cap sync android
 
-# 3. Compile the Android Debug APK via Gradle
+# 5. Compile & test the Debug APK (requires JDK 21 + Android SDK)
+cd android
 chmod +x ./gradlew
-./gradlew assembleDebug
+./gradlew --version --no-daemon
+./gradlew testDebugUnitTest assembleDebug --no-daemon
 ```
+
+The debug APK is generated at:
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+---
+
+## Troubleshooting
+
+- **SDK `tools` error in legacy CI runners:** Ensure `.github/workflows/build-apk.yml` uses `android-actions/setup-android@v4` without the removed `tools` SDK package and installs `platform-tools`, `platforms;android-36`, and `build-tools;36.0.0`.
+- **Stale web bundle inside APK:** Always run `npm run build && npx cap sync android` before `./gradlew assembleDebug` so `android/app/src/main/assets/public/` matches `dist/`.
+- **Optional Firebase config:** `android/app/build.gradle` only enables Google Services if `android/app/google-services.json` is present; Debug APK builds succeed without private Firebase credentials.

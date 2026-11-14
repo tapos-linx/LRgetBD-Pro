@@ -285,6 +285,10 @@ export function loadProxyConfig(): ProxyConfig {
       ...defaultConfig,
       ...parsed,
     };
+    // Normalize deprecated transport modes from older saved preferences
+    if ((merged.preferredMode as string) === 'SCRAPFLY') {
+      merged.preferredMode = detectDefaultTransportMode();
+    }
     // Auto-upgrade legacy slow 600-1200ms sequential config to fast 120-250ms batch config
     if (merged.minDelayMs >= 600 && merged.maxDelayMs >= 1200) {
       merged.minDelayMs = 120;

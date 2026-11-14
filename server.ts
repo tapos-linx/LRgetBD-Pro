@@ -83,7 +83,7 @@ async function startServer() {
     }
   });
 
-  // Live GitHub Releases Check for tapos-linx/LR_Mass_Downloader (with optional ?repo=owner/repo override)
+  // Live GitHub Releases Check for tapos-linx/LRgetBD-Pro (with optional ?repo=owner/repo override)
   app.get('/api/github-release-check', async (req, res) => {
     const requestedRepo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
     const isValidSlug = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(requestedRepo);
@@ -113,7 +113,7 @@ async function startServer() {
 
   const proxyResponseCache = new Map<
     string,
-    { status: number; contentType: string; buffer: Buffer; cachedAt: number }
+    { status: number; contentType: string; finalUrl: string; buffer: Buffer; cachedAt: number }
   >();
   const PROXY_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
   const MAX_PROXY_CACHE_ENTRIES = 500;
@@ -154,6 +154,7 @@ async function startServer() {
         res.setHeader('X-Upstream-Status', String(cached.status));
         res.setHeader('X-Upstream-Content-Type', cached.contentType);
         res.setHeader('X-Upstream-Url', normalizedUrl);
+        res.setHeader('X-Upstream-Final-Url', cached.finalUrl || normalizedUrl);
         res.setHeader('X-Upstream-Byte-Length', String(cached.buffer.byteLength));
         res.setHeader('X-Relay-Cache', 'HIT');
         res.status(cached.status).send(cached.buffer);
@@ -167,6 +168,7 @@ async function startServer() {
 
       const upstreamResponse = await fetch(normalizedUrl, {
         method: fetchMethod === 'POST' ? 'POST' : 'GET',
+        redirect: 'follow',
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Linux; Android 16; CPH2689) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
@@ -182,6 +184,7 @@ async function startServer() {
       clearTimeout(timeout);
 
       const contentType = upstreamResponse.headers.get('content-type') || 'application/octet-stream';
+      const finalUrl = upstreamResponse.url || normalizedUrl;
       const arrayBuffer = await upstreamResponse.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
@@ -193,6 +196,7 @@ async function startServer() {
         proxyResponseCache.set(normalizedUrl, {
           status: upstreamResponse.status,
           contentType,
+          finalUrl,
           buffer,
           cachedAt: Date.now(),
         });
@@ -203,6 +207,7 @@ async function startServer() {
       res.setHeader('X-Upstream-Status', String(upstreamResponse.status));
       res.setHeader('X-Upstream-Content-Type', contentType);
       res.setHeader('X-Upstream-Url', normalizedUrl);
+      res.setHeader('X-Upstream-Final-Url', finalUrl);
       res.setHeader('X-Upstream-Byte-Length', String(buffer.byteLength));
       res.setHeader('X-Relay-Cache', 'MISS');
 

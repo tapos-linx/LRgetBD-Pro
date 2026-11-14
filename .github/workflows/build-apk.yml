@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   build-android-apk:
+    name: Build & Verify Android Debug APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -25,31 +26,37 @@ jobs:
       - name: Setup Bun (Matches bun.lock)
         uses: oven-sh/setup-bun@v2
 
-      - name: Setup Java JDK 21 (Temurin — Required by Capacitor 8.6.0 & AGP 8.13.0)
+      - name: Setup Java JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK Command-Line Tools
+        uses: android-actions/setup-android@v4
 
-      - name: Accept Android SDK Licenses & Install Android 36 Platform + Build Tools
+      - name: Accept Android SDK Licenses & Install Required SDK Packages
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -z "$SDK_ROOT" ]; then
+            echo "ERROR: ANDROID_HOME / ANDROID_SDK_ROOT is not set."
+            exit 1
+          fi
+          yes | sdkmanager --licenses > /dev/null
           sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Setup Gradle Caching
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-home-cache-cleanup: true
 
-      - name: Install Dependencies from bun.lock, Check TypeScript & Run Unit Tests
+      - name: Install Dependencies, Type-Check & Run Complete Test Suite
         run: |
           bun install --frozen-lockfile
           npm run lint
           npm test
-          npx tsx --test src/services/queueEngine.test.ts
 
-      - name: Run Production Web Build & Synchronize Capacitor Android Assets
+      - name: Build Production Web Bundle & Sync Capacitor Android Assets
         run: |
           npm run build
           test -f dist/index.html
@@ -57,29 +64,32 @@ jobs:
           npx cap sync android
           test -f android/app/src/main/assets/public/index.html
           test -f android/app/src/main/assets/capacitor.config.json
+          cmp -s dist/index.html android/app/src/main/assets/public/index.html
+          DIST_JS=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html | head -n 1)
+          test -n "$DIST_JS"
+          test -f "android/app/src/main/assets/public/$DIST_JS"
 
-      - name: Compile Android Debug APK & Run Android Unit Tests
+      - name: Verify Gradle Wrapper & Build Android Debug APK
         working-directory: android
         run: |
+          test -f gradle/wrapper/gradle-wrapper.jar
+          test -f gradle/wrapper/gradle-wrapper.properties
           chmod +x ./gradlew
           ./gradlew --version --no-daemon
           ./gradlew testDebugUnitTest assembleDebug --no-daemon
 
-      - name: Validate Debug APK Existence, Package Identity, Version, Contents, Signature & SHA-256
+      - name: Validate Debug APK Structure, Identity, Signature, SHA-256 & Metadata
         run: |
           APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "ERROR: $APK_PATH was not generated!"
+          if [ ! -s "$APK_PATH" ]; then
+            echo "ERROR: $APK_PATH was not generated or is empty!"
             exit 1
           fi
 
-          FILE_SIZE=$(stat -c%s "$APK_PATH")
-          if [ "$FILE_SIZE" -lt 1048576 ]; then
-            echo "ERROR: APK file size ($FILE_SIZE bytes) is smaller than 1 MB!"
-            exit 1
-          fi
-
+          unzip -tq "$APK_PATH"
+          DIST_JS=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html | head -n 1)
           unzip -l "$APK_PATH" | grep -q "assets/public/index.html"
+          unzip -l "$APK_PATH" | grep -q "assets/public/$DIST_JS"
           unzip -l "$APK_PATH" | grep -q "assets/capacitor.config.json"
 
           SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
@@ -98,6 +108,7 @@ jobs:
 
           "$APKSIGNER_BIN" verify --verbose "$APK_PATH"
 
+          FILE_SIZE=$(stat -c%s "$APK_PATH")
           cp "$APK_PATH" ./LRgetBD-Pro-debug.apk
           sha256sum ./LRgetBD-Pro-debug.apk > ./LRgetBD-Pro-debug.apk.sha256
           SHA256_HASH=$(awk '{print $1}' ./LRgetBD-Pro-debug.apk.sha256)
@@ -106,22 +117,26 @@ jobs:
             const fs = require("fs");
             const meta = {
               project: "LRgetBD-Pro / LandArchive BD",
-              repository: process.env.GITHUB_REPOSITORY || "tapos-linx/LR_Mass_Downloader",
+              repository: process.env.GITHUB_REPOSITORY || "tapos-linx/LRgetBD-Pro",
+              workflowRunId: process.env.GITHUB_RUN_ID || "local",
+              workflowRunNumber: process.env.GITHUB_RUN_NUMBER || "0",
+              gitSha: process.env.GITHUB_SHA || "local",
+              applicationId: "bd.landarchive.lrgetbdpro",
+              versionCode: 1,
+              versionName: "2.1.0",
               buildType: "debug",
               releaseSigned: false,
               signingType: "android-debug-keystore",
               apkFileName: "LRgetBD-Pro-debug.apk",
               sourceApkPath: process.env.APK_PATH,
-              applicationId: "bd.landarchive.lrgetbdpro",
-              versionCode: 1,
-              versionName: "2.1.0",
-              minSdk: 24,
-              targetSdk: 36,
-              compileSdk: 36,
               fileSizeBytes: Number(process.env.FILE_SIZE),
               sha256: process.env.SHA256_HASH,
-              gitSha: process.env.GITHUB_SHA || "local",
-              runNumber: process.env.GITHUB_RUN_NUMBER || "0",
+              compileSdk: 36,
+              targetSdk: 36,
+              minSdk: 24,
+              gradleVersion: "8.14.3",
+              agpVersion: "8.13.0",
+              jdkVersion: "21",
               builtAtUtc: new Date().toISOString()
             };
             fs.writeFileSync("build-metadata.json", JSON.stringify(meta, null, 2) + "\n");
@@ -130,7 +145,21 @@ jobs:
           cat ./LRgetBD-Pro-debug.apk.sha256
           cat ./build-metadata.json
 
-      - name: Upload Verified Debug APK, SHA-256 Checksum & Build Metadata Artifact
+          {
+            echo "### LRgetBD-Pro Android Debug APK Build Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "| :--- | :--- |"
+            echo "| Repository | \`${GITHUB_REPOSITORY:-tapos-linx/LRgetBD-Pro}\` |"
+            echo "| Commit SHA | \`${GITHUB_SHA:-local}\` |"
+            echo "| Application ID | \`bd.landarchive.lrgetbdpro\` |"
+            echo "| Version | \`2.1.0\` (versionCode \`1\`) |"
+            echo "| Build / Signing | \`debug\` (\`android-debug-keystore\`, not release-signed) |"
+            echo "| APK Size | \`${FILE_SIZE} bytes\` |"
+            echo "| SHA-256 | \`${SHA256_HASH}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Verified Debug APK, SHA-256 Checksum & Build Metadata
         uses: actions/upload-artifact@v4
         with:
           name: LRgetBD-Pro-Debug-APK
@@ -139,4 +168,5 @@ jobs:
             ./LRgetBD-Pro-debug.apk
             ./LRgetBD-Pro-debug.apk.sha256
             ./build-metadata.json
+
 

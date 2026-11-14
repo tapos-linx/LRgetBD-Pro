@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   bytesToHex,
+  computeSha256Hex,
   hasPdfMagicSignature,
   inspectBinaryPayload,
+  inspectBinaryPayloadWithChecksum,
+  isStructurallyValidPdf,
   ValidationContext,
 } from './binaryValidator';
 import {
@@ -32,7 +35,22 @@ const sampleContext: ValidationContext = {
   sourceUrl: 'https://eporcha.tech/mouza-vittik-khatian?mouza_jl=114',
 };
 
-// Mock data for hierarchy tests
+function makeValidStructuralPdfBytes(totalSize = 2048): Uint8Array<ArrayBuffer> {
+  const header =
+    '%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Count 1 >>\nendobj\n';
+  const footer =
+    '\nxref\n0 3\n0000000000 65535 f \ntrailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n95\n%%EOF\n';
+  const enc = new TextEncoder();
+  const hBytes = enc.encode(header);
+  const fBytes = enc.encode(footer);
+  const size = Math.max(totalSize, hBytes.length + fBytes.length + 32);
+  const bytes = new Uint8Array(new ArrayBuffer(size));
+  bytes.set(hBytes, 0);
+  bytes.fill(0x20, hBytes.length, size - fBytes.length);
+  bytes.set(fBytes, size - fBytes.length);
+  return bytes;
+}
+
 const mockMouza: MouzaNode = {
   id: 'mz-114',
   jlNo: '114',
@@ -43,7 +61,7 @@ const mockMouza: MouzaNode = {
   availableSurveys: ['RS'],
   estimatedKhatians: 100,
   estimatedDags: 200,
-  mapSheets: [1]
+  mapSheets: [1],
 };
 
 const mockUpazila: UpazilaNode = {
@@ -51,7 +69,7 @@ const mockUpazila: UpazilaNode = {
   nameEn: 'Nabinagar',
   nameBn: 'নবীনগর',
   eporchaSlug: 'nabinagar',
-  mouzas: [mockMouza]
+  mouzas: [mockMouza],
 };
 
 const mockDistrict: DistrictNode = {
@@ -60,7 +78,7 @@ const mockDistrict: DistrictNode = {
   nameEn: 'Brahmanbaria',
   nameBn: 'ব্রাহ্মণবাড়িয়া',
   eporchaSlug: 'brahmanbaria',
-  upazilas: [mockUpazila]
+  upazilas: [mockUpazila],
 };
 
 const mockDivision: DivisionNode = {
@@ -68,19 +86,49 @@ const mockDivision: DivisionNode = {
   nameEn: 'Chattogram',
   nameBn: 'চট্টগ্রাম',
   eporchaSlug: 'chattogram',
-  districts: [mockDistrict]
+  districts: [mockDistrict],
 };
 
-test('validates authentic %PDF- binary header exceeding 1024 bytes', () => {
-  const bytes = new Uint8Array(2048);
-  bytes.set([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37], 0);
+test('validates structurally complete %PDF- binary exceeding 1024 bytes', () => {
+  const bytes = makeValidStructuralPdfBytes(2048);
   assert.equal(hasPdfMagicSignature(bytes), true);
+  assert.equal(isStructurallyValidPdf(bytes), true);
   assert.equal(bytesToHex(bytes, 5), '25 50 44 46 2D');
 
   const result = inspectBinaryPayload(bytes.buffer, sampleContext);
   assert.equal(result.isValidPdf, true);
+  assert.equal(result.headerValid, true);
+  assert.equal(result.structurallyValid, true);
   assert.equal(result.byteLength, 2048);
   assert.equal(result.magicBytesHex, '25 50 44 46 2D');
+});
+
+test('rejects false %PDF- magic header with zero-filled body', () => {
+  const bytes = new Uint8Array(2048);
+  bytes.set([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37], 0);
+
+  const result = inspectBinaryPayload(bytes.buffer, sampleContext);
+  assert.equal(result.headerValid, true);
+  assert.equal(result.structurallyValid, false);
+  assert.equal(result.isValidPdf, false);
+  assert.match(result.diagnosticReason, /structural/i);
+});
+
+test('rejects corrupt PDF missing %%EOF trailer and empty 0-byte payloads', () => {
+  const empty = new Uint8Array(0);
+  const emptyRes = inspectBinaryPayload(empty.buffer, sampleContext);
+  assert.equal(emptyRes.isValidPdf, false);
+  assert.equal(emptyRes.headerValid, false);
+  assert.equal(emptyRes.structurallyValid, false);
+
+  const enc = new TextEncoder();
+  const partialPdf = enc.encode(
+    '%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n' + ' '.repeat(1200)
+  );
+  const partialRes = inspectBinaryPayload(partialPdf.buffer, sampleContext);
+  assert.equal(partialRes.headerValid, true);
+  assert.equal(partialRes.structurallyValid, false);
+  assert.equal(partialRes.isValidPdf, false);
 });
 
 test('rejects truncated %PDF- buffer smaller than or equal to 1024 bytes', () => {
@@ -92,7 +140,7 @@ test('rejects truncated %PDF- buffer smaller than or equal to 1024 bytes', () =>
   assert.match(result.diagnosticReason, /Rejected truncated PDF/);
 });
 
-test('rejects HTML page masquerading as PDF and extracts HTML Khatian table rows', () => {
+test('rejects HTML page masquerading as PDF and extracts genuine HTML Khatian table rows without fabricating metadata rows', () => {
   const html = `<!DOCTYPE html>
   <html>
     <head><title>eporcha.tech - Survey Khatian</title></head>
@@ -114,6 +162,41 @@ test('rejects HTML page masquerading as PDF and extracts HTML Khatian table rows
   assert.equal(result.extractedRecords[0].ownerName, 'আব্দুল করিম ওং');
   assert.equal(result.extractedRecords[0].dagNo, '1420, 1421');
   assert.equal(result.extractedRecords[0].totalLandAcres, '1.45');
+
+  const loginHtml = `<!DOCTYPE html><html><head><title>Login Portal</title></head><body><a href="/doc/1">Download</a></body></html>`;
+  const loginRes = inspectBinaryPayload(
+    new TextEncoder().encode(loginHtml).buffer,
+    sampleContext
+  );
+  assert.equal(loginRes.isValidPdf, false);
+  assert.equal(loginRes.isHtmlPayload, true);
+  assert.equal(loginRes.extractedRecords.length, 0);
+});
+
+test('rejects JSON error payloads and records consistent SHA-256 digests', async () => {
+  const jsonErr = JSON.stringify({ success: false, message: 'Unauthorized' });
+  const jsonRes = await inspectBinaryPayloadWithChecksum(
+    new TextEncoder().encode(jsonErr).buffer,
+    sampleContext
+  );
+  assert.equal(jsonRes.isValidPdf, false);
+  assert.equal(jsonRes.isJsonPayload, true);
+  assert.equal(jsonRes.checksumRecorded, true);
+  assert.match(jsonRes.sha256 || '', /^[0-9a-f]{64}$/);
+
+  const validPdfBytes = makeValidStructuralPdfBytes(2048);
+  const digestA = await computeSha256Hex(validPdfBytes.buffer);
+  const digestB = await computeSha256Hex(validPdfBytes.buffer);
+  assert.equal(digestA, digestB);
+
+  const validRes = await inspectBinaryPayloadWithChecksum(
+    validPdfBytes.buffer,
+    sampleContext
+  );
+  assert.equal(validRes.isValidPdf, true);
+  assert.equal(validRes.structurallyValid, true);
+  assert.equal(validRes.checksumRecorded, true);
+  assert.equal(validRes.sha256, digestA);
 });
 
 test('builds standardized forensic filenames and eporcha.tech target URLs', () => {
@@ -144,7 +227,8 @@ test('builds standardized forensic filenames and eporcha.tech target URLs', () =
   assert.match(url, /mouza_jl=114/);
 });
 
-test('generateTasksForMouzasAndEndpoints builds full multi-endpoint queue', () => {
+test('generateTasksForMouzasAndEndpoints builds full multi-endpoint queue for all 6 document modes', () => {
+  assert.equal(ALL_ENDPOINT_TYPES.length, 6);
   const allTasks = generateTasksForMouzasAndEndpoints({
     divisionNameEn: mockDivision.nameEn,
     divisionSlug: mockDivision.eporchaSlug,

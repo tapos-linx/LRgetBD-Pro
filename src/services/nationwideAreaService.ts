@@ -1,4 +1,4 @@
-import { DivisionNode, DistrictNode, UpazilaNode, MouzaNode, QueueTask } from '../types/land';
+import { DivisionNode, DistrictNode, UpazilaNode, MouzaNode, GeoSourceStatus } from '../types/land';
 import { GEO_HIERARCHY } from '../data/geoHierarchy';
 
 export interface UpazilaFetchResult {
@@ -7,11 +7,12 @@ export interface UpazilaFetchResult {
   upazila: UpazilaNode;
   mouzas: MouzaNode[];
   totalMouzasCount: number;
+  sourceStatus: GeoSourceStatus;
 }
 
 /**
- * Mock API & data fetching function for nationwide Mouzas.
- * Fetches all Mouzas for any division -> district -> upazila in Bangladesh.
+ * Local dataset lookup helper for embedded Mouza records.
+ * Explicitly fails if division, district, or upazila ID does not exist rather than silently falling back.
  */
 export async function fetchNationwideMouzas(
   divisionId: string,
@@ -19,18 +20,26 @@ export async function fetchNationwideMouzas(
   upazilaId: string,
   customMouzas: MouzaNode[] = []
 ): Promise<UpazilaFetchResult> {
-  // Simulate rapid realistic async network resolution (< 60ms)
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  const division = GEO_HIERARCHY.find((d) => d.id === divisionId);
+  if (!division) {
+    throw new Error(`Division not found in local dataset: ${divisionId}`);
+  }
 
-  const division =
-    GEO_HIERARCHY.find((d) => d.id === divisionId) || GEO_HIERARCHY[0];
-  const district =
-    division.districts.find((dist) => dist.id === districtId) ||
-    division.districts[0];
-  const upazila =
-    district.upazilas.find((u) => u.id === upazilaId) || district.upazilas[0];
+  const district = division.districts.find((dist) => dist.id === districtId);
+  if (!district) {
+    throw new Error(`District ${districtId} does not belong to Division ${division.nameEn}`);
+  }
 
-  const allMouzas = [...upazila.mouzas, ...customMouzas];
+  const upazila = district.upazilas.find((u) => u.id === upazilaId);
+  if (!upazila) {
+    throw new Error(`Upazila ${upazilaId} does not belong to District ${district.nameEn}`);
+  }
+
+  const existingIds = new Set(upazila.mouzas.map((m) => m.id));
+  const allMouzas = [
+    ...upazila.mouzas,
+    ...customMouzas.filter((cm) => !existingIds.has(cm.id)),
+  ];
 
   return {
     division,
@@ -38,6 +47,7 @@ export async function fetchNationwideMouzas(
     upazila,
     mouzas: allMouzas,
     totalMouzasCount: allMouzas.length,
+    sourceStatus: 'LOCAL_DATASET',
   };
 }
 

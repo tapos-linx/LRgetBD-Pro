@@ -59,6 +59,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   const [firestoreSyncStatus, setFirestoreSyncStatus] = useState<string | null>(null);
   const [fileToDelete, setFileToDelete] = useState<DriveFileItem | null>(null);
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const [driveError, setDriveError] = useState<string | null>(null);
 
   const accessToken = getCachedAccessToken();
 
@@ -110,9 +111,10 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   };
 
   const handleUploadZipToDrive = async () => {
+    setDriveError(null);
     const token = getCachedAccessToken();
     if (!token || !currentUser) {
-      alert('Please sign in with Google first.');
+      setUploadStatus('Please sign in with Google first to authorize Google Drive uploads.');
       return;
     }
 
@@ -209,6 +211,7 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
   };
 
   const handleConfirmDelete = async () => {
+    setDriveError(null);
     const token = getCachedAccessToken();
     if (!token || !fileToDelete) return;
     try {
@@ -217,7 +220,11 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
       setDeleteConfirmationOpen(false);
       setFileToDelete(null);
     } catch (err) {
-      alert(`Could not delete file: ${err instanceof Error ? err.message : String(err)}`);
+      setDriveError(
+        `Could not delete file: ${err instanceof Error ? err.message : String(err)}`
+      );
+      setDeleteConfirmationOpen(false);
+      setFileToDelete(null);
     }
   };
 
@@ -484,6 +491,21 @@ export const GoogleDriveSyncModal: React.FC<GoogleDriveSyncModalProps> = ({
                   ))
                 )}
               </div>
+            </div>
+          )}
+          {driveError && (
+            <div
+              role="alert"
+              className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/40 text-xs text-rose-200 flex items-center justify-between gap-2"
+            >
+              <span>{driveError}</span>
+              <button
+                type="button"
+                onClick={() => setDriveError(null)}
+                className="text-rose-300 hover:text-white shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           )}
         </div>

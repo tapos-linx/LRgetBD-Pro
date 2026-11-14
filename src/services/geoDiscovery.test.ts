@@ -282,9 +282,9 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
     expect(stepB3.nextState.triggerReason).toBe('SUSTAINED_LATENCY_SPIKE');
   });
 
-  it('Scenario 12: Should enforce per-task automatic retry budget and flag PERMANENT_FAILURE after exhausting retries', () => {
-    const baseFailedTask: QueueTask = {
-      id: 'task-dead-link',
+  it('Scenario 12: Should enforce per-task retry budget for transient 5xx failures and flag permanent 4xx immediately', () => {
+    const transientFailedTask: QueueTask = {
+      id: 'task-transient-503',
       endpointType: 'mouza-vittik-khatian',
       docType: 'MOUZA_KHATIAN_BOOK',
       divisionNameEn: 'Chattogram',
@@ -299,19 +299,19 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
       mouzaNameEn: 'Nabinagar',
       mouzaNameBn: 'নবীনগর',
       surveyType: 'RS',
-      fileName: 'dead_link.pdf',
-      targetUrl: 'https://eporcha.tech/dead-link',
-      status: 'NOT_AVAILABLE_ON_EPORCHA_TECH',
-      httpStatus: 404,
+      fileName: 'transient_503.pdf',
+      targetUrl: 'https://eporcha.tech/transient-503',
+      status: 'FAILED_RETRY',
+      httpStatus: 503,
       pdfVerified: false,
-      errorMessage: 'HTTP 404 from eporcha.tech',
+      errorMessage: 'HTTP 503 Service Unavailable from eporcha.tech',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       retryCount: 0,
     };
 
     // Failure #1 (retryCount 0 -> 1 of 3): auto-requeued as QUEUED
-    const attempt1 = applyTaskRetryBudgetPolicy(baseFailedTask, 3);
+    const attempt1 = applyTaskRetryBudgetPolicy(transientFailedTask, 3);
     expect(attempt1.autoRequeued).toBe(true);
     expect(attempt1.flaggedPermanentFailure).toBe(false);
     expect(attempt1.nextTask.status).toBe('QUEUED');
@@ -319,7 +319,7 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
 
     // Failure #2 (retryCount 1 -> 2 of 3): auto-requeued as QUEUED
     const attempt2 = applyTaskRetryBudgetPolicy(
-      { ...attempt1.nextTask, status: 'NOT_AVAILABLE_ON_EPORCHA_TECH' },
+      { ...attempt1.nextTask, status: 'FAILED_RETRY', httpStatus: 503 },
       3
     );
     expect(attempt2.autoRequeued).toBe(true);
@@ -329,7 +329,7 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
 
     // Failure #3 (retryCount 2 -> 3 of 3): budget exhausted -> flagged PERMANENT_FAILURE
     const attempt3 = applyTaskRetryBudgetPolicy(
-      { ...attempt2.nextTask, status: 'NOT_AVAILABLE_ON_EPORCHA_TECH' },
+      { ...attempt2.nextTask, status: 'FAILED_RETRY', httpStatus: 503 },
       3
     );
     expect(attempt3.autoRequeued).toBe(false);
@@ -337,10 +337,24 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
     expect(attempt3.nextTask.status).toBe('PERMANENT_FAILURE');
     expect(attempt3.nextTask.retryCount).toBe(3);
 
+    // Permanent HTTP 404/403 should fail immediately on first attempt without exhausting retry cycles
+    const permanent404Task: QueueTask = {
+      ...transientFailedTask,
+      id: 'task-dead-link',
+      status: 'NOT_AVAILABLE_ON_EPORCHA_TECH',
+      httpStatus: 404,
+      errorMessage: 'HTTP 404 Not Found',
+    };
+    const permOutcome = applyTaskRetryBudgetPolicy(permanent404Task, 3);
+    expect(permOutcome.autoRequeued).toBe(false);
+    expect(permOutcome.flaggedPermanentFailure).toBe(true);
+    expect(permOutcome.nextTask.status).toBe('PERMANENT_FAILURE');
+
     // Calling retryFailedTasks must NOT re-queue PERMANENT_FAILURE tasks
-    const retryBatch = retryFailedTasks([attempt3.nextTask], 3);
+    const retryBatch = retryFailedTasks([attempt3.nextTask, permOutcome.nextTask], 3);
     expect(retryBatch.retriedCount).toBe(0);
     expect(retryBatch.updatedTasks[0].status).toBe('PERMANENT_FAILURE');
+    expect(retryBatch.updatedTasks[1].status).toBe('PERMANENT_FAILURE');
   });
 
   it('Scenario 11: Should query eporcha.tech URL for Upazila Mouzas, report the found count, and auto-select all discovered Mouzas', async () => {
@@ -399,9 +413,73 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
 
     expect(summary.totalFound).toBe(17);
     expect(summary.upazilas).toHaveLength(17);
-    expect(summary.portalUrl).toContain('DISTRICT_BBS_CODE=19');
     expect(summary.upazilas[0].nameEn).toBe('Upazila 1');
     expect(summary.upazilas[16].nameEn).toBe('Upazila 17');
+    expect(summary.sourceStatus).toBe('LIVE_SOURCE');
+    expect(summary.isLive).toBe(true);
+  });
+
+  it('Scenario 13: Rejects HTML login pages, empty bodies, and HTTP failures cleanly without faking live success', async () => {
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('<!DOCTYPE html><html><body>Login Required</body></html>'),
+    });
+
+    const htmlSummary = await geoDiscovery.queryMouzasFromPortalUrl('upz-kasba', 'dist-brahmanbaria');
+    expect(htmlSummary.isLive).toBe(false);
+    expect(htmlSummary.sourceStatus).toBe('FAILED');
+    expect(htmlSummary.totalFound).toBe(0);
+    expect(htmlSummary.errorMessage).toMatch(/HTML/i);
+
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('   '),
+    });
+
+    const emptySummary = await geoDiscovery.queryMouzasFromPortalUrl('upz-kasba', 'dist-brahmanbaria');
+    expect(emptySummary.isLive).toBe(false);
+    expect(emptySummary.sourceStatus).toBe('FAILED');
+    expect(emptySummary.errorMessage).toMatch(/Empty/i);
+
+    (fetch as any).mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal Server Error'),
+    });
+
+    const httpErrSummary = await geoDiscovery.queryMouzasFromPortalUrl('upz-kasba', 'dist-brahmanbaria');
+    expect(httpErrSummary.isLive).toBe(false);
+    expect(httpErrSummary.sourceStatus).toBe('FAILED');
+    expect(httpErrSummary.errorMessage).toMatch(/500/);
+  });
+
+  it('Scenario 14: Enforces strict parent-district match and handles duplicate/colliding codes safely', async () => {
+    // Attempt to query a Dhaka Upazila while constrained to Brahmanbaria district must NOT return wrong district data
+    const wrongParentSummary = await geoDiscovery.queryMouzasFromPortalUrl(
+      'upz-savar',
+      'dist-brahmanbaria'
+    );
+    expect(wrongParentSummary.isLive).toBe(false);
+    expect(wrongParentSummary.totalFound).toBe(0);
+    expect(wrongParentSummary.sourceStatus).toBe('NOT_FOUND');
+
+    // Duplicate Upazila codes returned by upstream JSON are deduplicated cleanly
+    (fetch as any).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: [
+            { ID: 101, NAME: 'কসবা', NAME_EN: 'KASBA', BBS_CODE: '63', DISTRICT_BBS_CODE: '12' },
+            { ID: 101, NAME: 'কসবা', NAME_EN: 'KASBA', BBS_CODE: '63', DISTRICT_BBS_CODE: '12' },
+          ],
+        }),
+    });
+
+    const dedupedUpazilas = await geoDiscovery.queryUpazilasFromPortalUrl('dist-brahmanbaria');
+    expect(dedupedUpazilas.upazilas).toHaveLength(1);
+    expect(dedupedUpazilas.sourceStatus).toBe('LIVE_SOURCE');
   });
 });
 

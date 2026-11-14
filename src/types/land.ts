@@ -59,6 +59,15 @@ export interface DivisionNode {
   districts: DistrictNode[];
 }
 
+export type GeoSourceStatus =
+  | 'LIVE_SOURCE'
+  | 'LOCAL_DATASET'
+  | 'CACHED'
+  | 'STALE'
+  | 'UNVERIFIED'
+  | 'FAILED'
+  | 'NOT_FOUND';
+
 export type TaskStatus =
   | 'QUEUED'
   | 'FETCHING_EPORCHA_TECH'
@@ -77,7 +86,6 @@ export type TransportMode =
   | 'SERVER_EXPRESS_RELAY'
   | 'TERMUX_LOCAL_PROXY'
   | 'CLOUDFLARE_WORKER_PROXY'
-  | 'SCRAPFLY'
   | 'DIRECT_BROWSER_FETCH';
 
 export interface QueueTask {
@@ -99,17 +107,29 @@ export interface QueueTask {
   bookStyle?: BookStyleConfig;
   khatianNo?: string;
   mapSheetNo?: number;
+  batchIndex?: number;
+  batchTotal?: number;
+  batchSize?: number;
   fileName: string;
   targetUrl: string;
+  finalUrl?: string;
+  mimeType?: string;
   status: TaskStatus;
   httpStatus?: number;
   latencyMs?: number;
   byteLength?: number;
   magicBytesHex?: string;
+  sha256?: string;
   pdfVerified: boolean;
+  headerValid?: boolean;
+  structurallyValid?: boolean;
+  checksumRecorded?: boolean;
+  sourceVerified?: boolean;
+  officiallyAuthentic?: boolean;
   extractedRowCount?: number;
   transportUsed?: TransportMode;
   errorMessage?: string;
+  retrievedAt?: string;
   createdAt: string;
   updatedAt: string;
   retryCount: number;
@@ -117,6 +137,10 @@ export interface QueueTask {
 
 export interface BinaryValidationResult {
   isValidPdf: boolean;
+  headerValid?: boolean;
+  structurallyValid?: boolean;
+  checksumRecorded?: boolean;
+  sha256?: string;
   byteLength: number;
   magicBytesHex: string;
   isHtmlPayload: boolean;
@@ -147,10 +171,13 @@ export interface VerifiedBlobRecord {
   fileName: string;
   mimeType: string;
   isPdfVerified: boolean;
+  structurallyValid?: boolean;
+  sha256?: string;
   byteLength: number;
   magicHex: string;
   buffer: ArrayBuffer;
   targetUrl: string;
+  finalUrl?: string;
   verifiedAt: string;
 }
 

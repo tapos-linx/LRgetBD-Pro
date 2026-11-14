@@ -49,8 +49,17 @@ export const PortalAlertsView: React.FC = () => {
       
       setVisibleAlerts(prev => [newAlert, ...prev]);
     } catch (error) {
-      console.error(error);
-      alert('Verification failed');
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('Portal status check failed:', error);
+      setVisibleAlerts((prev) => [
+        {
+          id: 'status-check-err-' + Date.now(),
+          type: 'warning',
+          title: 'Status Verification Unavailable',
+          message: `Could not verify portal status: ${msg}`,
+        },
+        ...prev,
+      ]);
     } finally {
       setIsVerifying(false);
     }

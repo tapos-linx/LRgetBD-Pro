@@ -221,18 +221,57 @@ export function generateTasksForMouzasAndEndpoints(params: {
   bookStyle: BookStyleConfig;
   khatianNo?: string;
   mapSheetNo?: number;
+  batchIndex?: number;
+  batchTotal?: number;
+  batchSize?: number;
 }): import('../types/land').QueueTask[] {
   const nowIso = new Date().toISOString();
   const tasks: import('../types/land').QueueTask[] = [];
-  let seq = 0;
+  const seenMouzaIds = new Set<string>();
+  const seenTaskIds = new Set<string>();
+
+  const uniqueEndpoints = Array.from(new Set(params.endpoints));
+  const uniqueSurveys = Array.from(new Set(params.surveys));
 
   for (const mouza of params.mouzas) {
-    for (const ep of params.endpoints) {
+    const mouzaIdentity = mouza.id || `jl-${mouza.jlNo}`;
+    if (seenMouzaIds.has(mouzaIdentity)) continue;
+    seenMouzaIds.add(mouzaIdentity);
+
+    for (const ep of uniqueEndpoints) {
       const effectiveSurveys: SurveyType[] =
-        ep === 'namjari-khatian' ? ['MUTATION'] : params.surveys;
+        ep === 'namjari-khatian' ? ['MUTATION'] : uniqueSurveys;
 
       for (const survey of effectiveSurveys) {
-        seq++;
+        const khatianTag =
+          ep === 'survey-khatian' || ep === 'namjari-khatian'
+            ? params.khatianNo || 'ALL'
+            : undefined;
+        const mapSheetTag = ep === 'mouza-map' ? params.mapSheetNo || 1 : undefined;
+        const styleTag =
+          ep === 'mouza-vittik-khatian'
+            ? `${params.bookStyle.layout}-${params.bookStyle.colorMode}`
+            : khatianTag
+            ? `kh-${sanitizeSegment(khatianTag)}`
+            : mapSheetTag
+            ? `sh-${mapSheetTag}`
+            : 'std';
+
+        const taskId = [
+          'task',
+          sanitizeSegment(params.divisionSlug),
+          sanitizeSegment(params.districtSlug),
+          sanitizeSegment(params.upazilaSlug),
+          sanitizeSegment(mouzaIdentity),
+          sanitizeSegment(mouza.jlNo),
+          ep,
+          survey,
+          styleTag,
+        ].join('-');
+
+        if (seenTaskIds.has(taskId)) continue;
+        seenTaskIds.add(taskId);
+
         const fileName = buildForensicFileName({
           districtNameEn: params.districtNameEn,
           upazilaNameEn: params.upazilaNameEn,
@@ -241,11 +280,8 @@ export function generateTasksForMouzasAndEndpoints(params: {
           surveyType: survey,
           endpointType: ep,
           bookStyle: ep === 'mouza-vittik-khatian' ? params.bookStyle : undefined,
-          khatianNo:
-            ep === 'survey-khatian' || ep === 'namjari-khatian'
-              ? params.khatianNo || 'ALL'
-              : undefined,
-          mapSheetNo: ep === 'mouza-map' ? params.mapSheetNo || 1 : undefined,
+          khatianNo: khatianTag,
+          mapSheetNo: mapSheetTag,
         });
 
         const targetUrl = buildEporchaTargetUrl({
@@ -256,15 +292,12 @@ export function generateTasksForMouzasAndEndpoints(params: {
           mouza,
           surveyType: survey,
           bookStyle: ep === 'mouza-vittik-khatian' ? params.bookStyle : undefined,
-          khatianNo:
-            ep === 'survey-khatian' || ep === 'namjari-khatian'
-              ? params.khatianNo || 'ALL'
-              : undefined,
-          mapSheetNo: ep === 'mouza-map' ? params.mapSheetNo || 1 : undefined,
+          khatianNo: khatianTag,
+          mapSheetNo: mapSheetTag,
         });
 
         tasks.push({
-          id: `task-${params.upazilaSlug}-${mouza.jlNo}-${ep}-${survey}-${seq}`,
+          id: taskId,
           endpointType: ep,
           docType: ENDPOINT_MODE_META[ep].docType,
           divisionNameEn: params.divisionNameEn,
@@ -281,11 +314,11 @@ export function generateTasksForMouzasAndEndpoints(params: {
           surveyType: survey,
           bookStyle:
             ep === 'mouza-vittik-khatian' ? { ...params.bookStyle } : undefined,
-          khatianNo:
-            ep === 'survey-khatian' || ep === 'namjari-khatian'
-              ? params.khatianNo || 'ALL'
-              : undefined,
-          mapSheetNo: ep === 'mouza-map' ? params.mapSheetNo || 1 : undefined,
+          khatianNo: khatianTag,
+          mapSheetNo: mapSheetTag,
+          batchIndex: params.batchIndex,
+          batchTotal: params.batchTotal,
+          batchSize: params.batchSize,
           fileName,
           targetUrl,
           status: 'QUEUED',

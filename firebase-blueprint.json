@@ -53,6 +53,116 @@
         "uploadedAt": { "type": "string", "description": "ISO timestamp of upload" }
       },
       "required": ["archiveId", "userId", "driveFileId", "driveFileName"]
+    },
+    "GeoDivision": {
+      "title": "GeoDivision",
+      "description": "Bangladesh division node with provenance metadata; defaults to UNVERIFIED until verified.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Stable division identifier" },
+        "nameEn": { "type": "string", "maxLength": 120, "description": "English name" },
+        "nameBn": { "type": "string", "maxLength": 120, "description": "Bengali name" },
+        "eporchaSlug": { "type": "string", "maxLength": 120, "description": "Portal slug" },
+        "recordedByUid": { "type": "string", "maxLength": 128, "description": "Authenticated user UID that recorded this node" },
+        "source": { "type": "string", "maxLength": 120, "description": "Data source identifier" },
+        "sourceUrl": { "type": "string", "maxLength": 512, "description": "Optional source endpoint URL" },
+        "rawSourceId": { "type": "string", "maxLength": 128, "description": "Upstream raw source identifier" },
+        "retrievedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when retrieved" },
+        "verificationMethod": { "type": "string", "maxLength": 128, "description": "Verification method when verified" },
+        "verifiedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when verified" },
+        "status": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"], "description": "Provenance verification state" },
+        "isValid": { "type": "boolean", "description": "True only after explicit verification" }
+      },
+      "required": ["id", "nameEn", "nameBn", "eporchaSlug", "recordedByUid", "source", "rawSourceId", "retrievedAt", "status", "isValid"]
+    },
+    "GeoDistrict": {
+      "title": "GeoDistrict",
+      "description": "Bangladesh district node bound to parent division with provenance metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Stable district identifier" },
+        "code": { "type": "string", "maxLength": 32, "description": "BBS district code" },
+        "nameEn": { "type": "string", "maxLength": 120, "description": "English name" },
+        "nameBn": { "type": "string", "maxLength": 120, "description": "Bengali name" },
+        "eporchaSlug": { "type": "string", "maxLength": 120, "description": "Portal slug" },
+        "divisionId": { "type": "string", "maxLength": 128, "description": "Parent division ID" },
+        "parentId": { "type": "string", "maxLength": 128, "description": "Parent division ID alias" },
+        "recordedByUid": { "type": "string", "maxLength": 128, "description": "Authenticated user UID that recorded this node" },
+        "source": { "type": "string", "maxLength": 120, "description": "Data source identifier" },
+        "sourceUrl": { "type": "string", "maxLength": 512, "description": "Optional source endpoint URL" },
+        "rawSourceId": { "type": "string", "maxLength": 128, "description": "Upstream raw source identifier" },
+        "retrievedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when retrieved" },
+        "verificationMethod": { "type": "string", "maxLength": 128, "description": "Verification method when verified" },
+        "verifiedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when verified" },
+        "status": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"], "description": "Provenance verification state" },
+        "isValid": { "type": "boolean", "description": "True only after explicit verification" }
+      },
+      "required": ["id", "code", "nameEn", "nameBn", "eporchaSlug", "divisionId", "parentId", "recordedByUid", "source", "rawSourceId", "retrievedAt", "status", "isValid"]
+    },
+    "GeoUpazila": {
+      "title": "GeoUpazila",
+      "description": "Bangladesh upazila node bound to parent district with provenance metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Stable upazila identifier" },
+        "nameEn": { "type": "string", "maxLength": 120, "description": "English name" },
+        "nameBn": { "type": "string", "maxLength": 120, "description": "Bengali name" },
+        "eporchaSlug": { "type": "string", "maxLength": 120, "description": "Portal slug" },
+        "districtId": { "type": "string", "maxLength": 128, "description": "Parent district ID" },
+        "parentId": { "type": "string", "maxLength": 128, "description": "Parent district ID alias" },
+        "recordedByUid": { "type": "string", "maxLength": 128, "description": "Authenticated user UID that recorded this node" },
+        "source": { "type": "string", "maxLength": 120, "description": "Data source identifier" },
+        "sourceUrl": { "type": "string", "maxLength": 512, "description": "Optional source endpoint URL" },
+        "rawSourceId": { "type": "string", "maxLength": 128, "description": "Upstream raw source identifier" },
+        "retrievedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when retrieved" },
+        "verificationMethod": { "type": "string", "maxLength": 128, "description": "Verification method when verified" },
+        "verifiedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when verified" },
+        "status": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"], "description": "Provenance verification state" },
+        "isValid": { "type": "boolean", "description": "True only after explicit verification" }
+      },
+      "required": ["id", "nameEn", "nameBn", "eporchaSlug", "districtId", "parentId", "recordedByUid", "source", "rawSourceId", "retrievedAt", "status", "isValid"]
+    },
+    "GeoMouza": {
+      "title": "GeoMouza",
+      "description": "Bangladesh mouza node bound to parent upazila with provenance metadata.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "description": "Stable mouza identifier" },
+        "jlNo": { "type": "string", "maxLength": 64, "description": "Mouza JL number" },
+        "nameEn": { "type": "string", "maxLength": 160, "description": "English name" },
+        "nameBn": { "type": "string", "maxLength": 160, "description": "Bengali name" },
+        "unionNameEn": { "type": "string", "maxLength": 160, "description": "Union English name" },
+        "unionNameBn": { "type": "string", "maxLength": 160, "description": "Union Bengali name" },
+        "availableSurveys": { "type": "array", "description": "Bounded survey types list (max 5)" },
+        "estimatedKhatians": { "type": "number", "description": "Estimated khatian count" },
+        "estimatedDags": { "type": "number", "description": "Estimated dag count" },
+        "mapSheets": { "type": "array", "description": "Bounded sheet numbers list (max 50)" },
+        "upazilaId": { "type": "string", "maxLength": 128, "description": "Parent upazila ID" },
+        "parentId": { "type": "string", "maxLength": 128, "description": "Parent upazila ID alias" },
+        "recordedByUid": { "type": "string", "maxLength": 128, "description": "Authenticated user UID that recorded this node" },
+        "source": { "type": "string", "maxLength": 120, "description": "Data source identifier" },
+        "sourceUrl": { "type": "string", "maxLength": 512, "description": "Optional source endpoint URL" },
+        "rawSourceId": { "type": "string", "maxLength": 128, "description": "Upstream raw source identifier" },
+        "retrievedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when retrieved" },
+        "verificationMethod": { "type": "string", "maxLength": 128, "description": "Verification method when verified" },
+        "verifiedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when verified" },
+        "status": { "type": "string", "enum": ["UNVERIFIED", "VERIFIED"], "description": "Provenance verification state" },
+        "isValid": { "type": "boolean", "description": "True only after explicit verification" }
+      },
+      "required": ["id", "jlNo", "nameEn", "nameBn", "upazilaId", "parentId", "recordedByUid", "source", "rawSourceId", "retrievedAt", "status", "isValid"]
+    },
+    "GeoDataQualityLog": {
+      "title": "GeoDataQualityLog",
+      "description": "Audit log for rejected or malformed geographic discovery records.",
+      "type": "object",
+      "properties": {
+        "recordedByUid": { "type": "string", "maxLength": 128, "description": "Authenticated user UID" },
+        "originalRecord": { "type": "string", "maxLength": 2000, "description": "Truncated raw record payload" },
+        "reason": { "type": "string", "maxLength": 500, "description": "Rejection reason" },
+        "source": { "type": "string", "maxLength": 200, "description": "Source endpoint or dataset" },
+        "rejectedAt": { "type": "string", "format": "date-time", "description": "Firestore timestamp when rejected" }
+      },
+      "required": ["recordedByUid", "originalRecord", "reason", "source", "rejectedAt"]
     }
   },
   "firestore": {
@@ -67,6 +177,26 @@
     "/users/{userId}/archives/{archiveId}": {
       "schema": { "$ref": "#/entities/DriveArchiveBundle" },
       "description": "Google Drive archive uploads per user"
+    },
+    "/divisions/{divisionId}": {
+      "schema": { "$ref": "#/entities/GeoDivision" },
+      "description": "Provenance-tracked Bangladesh division records"
+    },
+    "/districts/{districtId}": {
+      "schema": { "$ref": "#/entities/GeoDistrict" },
+      "description": "Provenance-tracked Bangladesh district records"
+    },
+    "/upazilas/{upazilaId}": {
+      "schema": { "$ref": "#/entities/GeoUpazila" },
+      "description": "Provenance-tracked Bangladesh upazila records"
+    },
+    "/mouzas/{mouzaId}": {
+      "schema": { "$ref": "#/entities/GeoMouza" },
+      "description": "Provenance-tracked Bangladesh mouza records"
+    },
+    "/geographic_data_quality_logs/{logId}": {
+      "schema": { "$ref": "#/entities/GeoDataQualityLog" },
+      "description": "Audit log of malformed or rejected discovery payloads"
     }
   }
 }
