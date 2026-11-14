@@ -1,0 +1,13 @@
+{
+	"appId": "bd.landarchive.lrgetbdpro",
+	"appName": "LRgetBD Pro",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	},
+	"plugins": {
+		"CapacitorHttp": {
+			"enabled": true
+		}
+	}
+}

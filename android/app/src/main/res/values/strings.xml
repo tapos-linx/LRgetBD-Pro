@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LRgetBD Pro</string>
+    <string name="title_activity_main">LRgetBD Pro</string>
+    <string name="package_name">bd.landarchive.lrgetbdpro</string>
+    <string name="custom_url_scheme">bd.landarchive.lrgetbdpro</string>
+</resources>
