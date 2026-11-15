@@ -1,8 +1,18 @@
 # LRgetBD-Pro (v2.1.0)
 
 [![Build Android Debug APK](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml/badge.svg)](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml)
+[![Download Android Debug APK](https://img.shields.io/badge/One--Click%20Download-LRgetBD--Pro--debug.apk%20(v2.1.0)-10b981?style=for-the-badge&logo=android&logoColor=white)](https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk)
 
 **LRgetBD-Pro** (`bd.landarchive.lrgetbdpro`, v2.1.0) is a **React 19 + TypeScript + Vite 8 + Express + Capacitor 8** web and Android application for structured lookup, binary verification, indexing, and ZIP archival of Bangladeshi land records (**Survey Khatians, Namjari Khatians, Mouza Khatian Books, Mouza Dag Books, Mouza Maps, and Khatian Index** across **CS, SA, RS, BS, and Mutation** surveys) from **`https://eporcha.tech`**.
+
+---
+
+## One-Click Android APK Download
+
+- **Direct One-Click APK Download:** [**Download `LRgetBD-Pro-debug.apk` (v2.1.0)**](https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk)
+- **Verification Files:** [`LRgetBD-Pro-debug.apk.sha256`](https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk.sha256) · [`build-metadata.json`](https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/build-metadata.json) · [Rolling `debug-latest` Release](https://github.com/tapos-linx/LRgetBD-Pro/releases/tag/debug-latest) · [GitHub Actions Builds](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml)
+
+> **Note:** `LRgetBD-Pro-debug.apk` is automatically compiled, verified (`aapt2` + `apksigner`), and attached to the `debug-latest` pre-release on every push to `main` (signed with `android-debug-keystore` for testing/sideloading, not release-signed).
 
 ---
 
@@ -11,7 +21,7 @@
 - **Active Web & Android Application:** Built with React 19, TypeScript, Vite 8, Tailwind CSS v4, and Express (`server.ts`), packaged for Android using **Capacitor 8** inside the **`android/`** Gradle project (`applicationId "bd.landarchive.lrgetbdpro"`, `versionCode 1`, `versionName "2.1.0"`).
 - **Separate Root `/app/` Directory:** The repository also contains an uncompiled Kotlin/Jetpack Compose source tree under root `/app/`. It is **not** part of the Gradle/Capacitor build packaged into the APK and is preserved untouched as reference/legacy native source.
 - **6-Document Framework:** Requirements, state machine, UI specification, technical contracts, storage schema, and implementation roadmap live in `/docs/01_PRD.md` through `/docs/06_Plan.md`.
-- **Android Debug APK CI Delivery:** `.github/workflows/build-apk.yml` builds and validates the **debug-signed** APK (`LRgetBD-Pro-debug.apk`), `LRgetBD-Pro-debug.apk.sha256`, and `build-metadata.json` as GitHub Actions workflow artifacts on pushes and pull requests to `main`. Check the latest workflow run in the [Actions tab](https://github.com/tapos-linx/LRgetBD-Pro/actions/workflows/build-apk.yml).
+- **Android Debug APK CI Delivery:** `.github/workflows/build-apk.yml` compiles and validates `LRgetBD-Pro-debug.apk`, uploads it as a GitHub Actions workflow artifact (`LRgetBD-Pro-Debug-APK`), and publishes it to the rolling [`debug-latest`](https://github.com/tapos-linx/LRgetBD-Pro/releases/tag/debug-latest) pre-release so the README one-click download link stays up to date.
 
 ---
 

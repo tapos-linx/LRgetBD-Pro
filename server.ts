@@ -88,13 +88,15 @@ async function startServer() {
     const requestedRepo = typeof req.query.repo === 'string' ? req.query.repo.trim() : '';
     const isValidSlug = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(requestedRepo);
     const repo = isValidSlug ? requestedRepo : 'tapos-linx/LRgetBD-Pro';
+    const headers = {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'LRgetBD-Pro-Release-Inspector',
+    };
     try {
-      const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'LRgetBD-Pro-Release-Inspector',
-        },
-      });
+      let response = await fetch(`https://api.github.com/repos/${repo}/releases/tags/debug-latest`, { headers });
+      if (response.status === 404) {
+        response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
+      }
       if (response.ok) {
         const data = await response.json();
         res.status(200).json({ ok: true, status: response.status, repo, data });

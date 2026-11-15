@@ -218,12 +218,21 @@ export async function fetchLatestApkRelease(
   }
 
   try {
-    const response = await fetch(endpoints.releasesApiEndpoint, {
+    let response = await fetch(endpoints.releasesApiEndpoint, {
       method: 'GET',
       headers: {
         Accept: 'application/vnd.github+json',
       },
     });
+
+    if (response.status === 404) {
+      response = await fetch(endpoints.latestReleasesApiEndpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/vnd.github+json',
+        },
+      });
+    }
 
     if (response.ok) {
       const data = (await response.json()) as GithubReleaseRaw;
@@ -248,7 +257,7 @@ export async function fetchLatestApkRelease(
  * Pre-Flight Verification & Direct Binary Download Trigger.
  * Never generates a synthetic Blob in JavaScript and never downloads if the release does not exist yet.
  * Triggers a native browser/Android download via an invisible <a> element pointing to the verified
- * browser_download_url or https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk.
+ * browser_download_url or https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk.
  */
 export function triggerVerifiedApkDownload(release: ApkReleaseCheckResult): boolean {
   if (

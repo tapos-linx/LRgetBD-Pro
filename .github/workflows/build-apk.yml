@@ -14,6 +14,8 @@ jobs:
   build-android-apk:
     name: Build & Verify Android Debug APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -168,5 +170,74 @@ jobs:
             ./LRgetBD-Pro-debug.apk
             ./LRgetBD-Pro-debug.apk.sha256
             ./build-metadata.json
+
+  publish-debug-release:
+    name: Publish Rolling One-Click Debug APK Release
+    needs: build-android-apk
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Verified Debug APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LRgetBD-Pro-Debug-APK
+          path: ./release-assets
+
+      - name: Verify Downloaded Release Assets
+        run: |
+          test -s ./release-assets/LRgetBD-Pro-debug.apk
+          test -s ./release-assets/LRgetBD-Pro-debug.apk.sha256
+          test -s ./release-assets/build-metadata.json
+          (cd ./release-assets && sha256sum -c LRgetBD-Pro-debug.apk.sha256)
+
+      - name: Create or Update Rolling debug-latest Pre-Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="debug-latest"
+          SHA_HASH=$(awk '{print $1}' ./release-assets/LRgetBD-Pro-debug.apk.sha256)
+          FILE_SIZE=$(stat -c%s ./release-assets/LRgetBD-Pro-debug.apk)
+          NOTES=$(printf '%s\n' \
+            "Automated CI Debug APK build from commit \`${GITHUB_SHA}\` (Run #${GITHUB_RUN_NUMBER})." \
+            "" \
+            "- **Direct One-Click APK Download:** \`LRgetBD-Pro-debug.apk\` (${FILE_SIZE} bytes)" \
+            "- **Application ID:** \`bd.landarchive.lrgetbdpro\`" \
+            "- **Version:** \`2.1.0\` (versionCode \`1\`)" \
+            "- **Signing Type:** \`debug\` (\`android-debug-keystore\`, not release-signed)" \
+            "- **SHA-256:** \`${SHA_HASH}\`")
+
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "LRgetBD-Pro Latest Debug APK (v2.1.0)" \
+              --notes "$NOTES" \
+              --prerelease
+            gh release upload "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber \
+              ./release-assets/LRgetBD-Pro-debug.apk \
+              ./release-assets/LRgetBD-Pro-debug.apk.sha256 \
+              ./release-assets/build-metadata.json
+          else
+            gh release create "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "LRgetBD-Pro Latest Debug APK (v2.1.0)" \
+              --notes "$NOTES" \
+              --prerelease \
+              ./release-assets/LRgetBD-Pro-debug.apk \
+              ./release-assets/LRgetBD-Pro-debug.apk.sha256 \
+              ./release-assets/build-metadata.json
+          fi
+
+          {
+            echo "### One-Click README Download Published"
+            echo ""
+            echo "- **Direct APK URL:** https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/LRgetBD-Pro-debug.apk"
+            echo "- **Release Page:** https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
 

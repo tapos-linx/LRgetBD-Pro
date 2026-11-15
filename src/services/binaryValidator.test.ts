@@ -273,13 +273,37 @@ test('buildQueueTasksForUpazila selects 100% of available Mouzas and builds task
   assert.equal(result.tasks.length, mockUpazila.mouzas.length * 4);
 });
 
-test('verifies official repoConfig coordinates', async () => {
+test('verifies official repoConfig coordinates and one-click debug APK release matching', async () => {
   const { REPO_CONFIG } = await import('../config/repoConfig');
+  const { inspectGithubReleasePayload } = await import('./apkReleaseService');
 
   assert.equal(REPO_CONFIG.owner, 'tapos-linx');
   assert.equal(REPO_CONFIG.repo, 'LRgetBD-Pro');
   assert.equal(REPO_CONFIG.appName, 'LRgetBD Pro');
   assert.equal(REPO_CONFIG.appId, 'bd.landarchive.lrgetbdpro');
+  assert.equal(REPO_CONFIG.releaseTag, 'debug-latest');
+  assert.equal(REPO_CONFIG.standardApkFilename, 'LRgetBD-Pro-debug.apk');
+  assert.equal(
+    REPO_CONFIG.directFallbackAssetUrl,
+    'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk'
+  );
+
+  const inspected = inspectGithubReleasePayload(200, {
+    tag_name: 'debug-latest',
+    name: 'LRgetBD-Pro Latest Debug APK (v2.1.0)',
+    assets: [
+      {
+        name: 'LRgetBD-Pro-debug.apk',
+        size: 4_500_000,
+        browser_download_url:
+          'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk',
+        download_count: 1,
+      },
+    ],
+  });
+  assert.equal(inspected.verified, true);
+  assert.equal(inspected.status, 'VERIFIED_READY');
+  assert.equal(inspected.assetName, 'LRgetBD-Pro-debug.apk');
 });
 
 test('calculateQueueProgress accurately computes completion percentage and status counts', () => {

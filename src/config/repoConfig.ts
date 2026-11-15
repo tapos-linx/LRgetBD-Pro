@@ -4,13 +4,15 @@ export const REPO_CONFIG = {
   fullSlug: 'tapos-linx/LRgetBD-Pro',
   appName: 'LRgetBD Pro',
   appId: 'bd.landarchive.lrgetbdpro',
-  standardApkFilename: 'LRgetBD-Pro.apk',
+  releaseTag: 'debug-latest',
+  standardApkFilename: 'LRgetBD-Pro-debug.apk',
   minValidApkSizeBytes: 1048576, // 1 MB (1,048,576 bytes)
-  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest',
+  releasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/tags/debug-latest',
+  latestReleasesApiEndpoint: 'https://api.github.com/repos/tapos-linx/LRgetBD-Pro/releases/latest',
   directFallbackAssetUrl:
-    'https://github.com/tapos-linx/LRgetBD-Pro/releases/latest/download/LRgetBD-Pro.apk',
+    'https://github.com/tapos-linx/LRgetBD-Pro/releases/download/debug-latest/LRgetBD-Pro-debug.apk',
   actionsUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/actions',
-  releasesPageUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/releases',
+  releasesPageUrl: 'https://github.com/tapos-linx/LRgetBD-Pro/releases/tag/debug-latest',
   workflowFilePath: '.github/workflows/build-apk.yml',
   repoStorageKey: 'lrgetbd_pro_repo_slug_v2',
 } as const;
@@ -26,10 +28,11 @@ export function buildRepoEndpoints(slug: string = REPO_CONFIG.fullSlug) {
     owner,
     repo,
     fullSlug,
-    releasesApiEndpoint: `https://api.github.com/repos/${fullSlug}/releases/latest`,
-    directFallbackAssetUrl: `https://github.com/${fullSlug}/releases/latest/download/${REPO_CONFIG.standardApkFilename}`,
+    releasesApiEndpoint: `https://api.github.com/repos/${fullSlug}/releases/tags/${REPO_CONFIG.releaseTag}`,
+    latestReleasesApiEndpoint: `https://api.github.com/repos/${fullSlug}/releases/latest`,
+    directFallbackAssetUrl: `https://github.com/${fullSlug}/releases/download/${REPO_CONFIG.releaseTag}/${REPO_CONFIG.standardApkFilename}`,
     actionsUrl: `https://github.com/${fullSlug}/actions`,
-    releasesPageUrl: `https://github.com/${fullSlug}/releases`,
+    releasesPageUrl: `https://github.com/${fullSlug}/releases/tag/${REPO_CONFIG.releaseTag}`,
   };
 }
 
@@ -49,6 +52,8 @@ jobs:
   build-android-apk:
     name: Build & Verify Android Debug APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -120,4 +125,28 @@ jobs:
             ./LRgetBD-Pro-debug.apk
             ./LRgetBD-Pro-debug.apk.sha256
             ./build-metadata.json
+
+  publish-debug-release:
+    name: Publish Rolling One-Click Debug APK Release
+    needs: build-android-apk
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Verified Debug APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LRgetBD-Pro-Debug-APK
+          path: ./release-assets
+      - name: Create or Update Rolling debug-latest Pre-Release
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          TAG="debug-latest"
+          if gh release view "$TAG" --repo "\${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "\${GITHUB_REPOSITORY}" --clobber ./release-assets/LRgetBD-Pro-debug.apk ./release-assets/LRgetBD-Pro-debug.apk.sha256 ./release-assets/build-metadata.json
+          else
+            gh release create "$TAG" --repo "\${GITHUB_REPOSITORY}" --prerelease --title "LRgetBD-Pro Latest Debug APK (v2.1.0)" ./release-assets/LRgetBD-Pro-debug.apk ./release-assets/LRgetBD-Pro-debug.apk.sha256 ./release-assets/build-metadata.json
+          fi
 `;

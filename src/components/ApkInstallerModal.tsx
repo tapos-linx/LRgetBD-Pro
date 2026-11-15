@@ -224,7 +224,7 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-xs font-semibold text-emerald-300">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>VERIFIED ANDROID APK READY (&gt; 1 MB)</span>
+                  <span>VERIFIED ANDROID DEBUG APK READY</span>
                 </span>
                 <span className="text-xs font-mono-tabular text-emerald-400">
                   Downloads: {releaseInfo.downloadCount}
@@ -301,7 +301,7 @@ export const ApkInstallerModal: React.FC<ApkInstallerModalProps> = ({
 
               <p className="text-xs text-slate-300 leading-relaxed">
                 {releaseInfo?.message ||
-                  `Checking https://api.github.com/repos/${repoSlugInput}/releases/latest for ${REPO_CONFIG.standardApkFilename}...`}
+                  `Checking https://api.github.com/repos/${repoSlugInput}/releases/tags/${REPO_CONFIG.releaseTag} for ${REPO_CONFIG.standardApkFilename}...`}
               </p>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 text-xs border-t border-amber-500/20">
