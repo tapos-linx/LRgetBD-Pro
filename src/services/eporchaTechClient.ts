@@ -1,5 +1,4 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
-import * as cheerio from 'cheerio';
 
 import {
   BinaryValidationResult,
@@ -285,19 +284,41 @@ export async function extractPdfUrl(
   }
 
   const rawHtml = await response.text();
-  const $ = cheerio.load(rawHtml);
-  const anchorTags = $('a[href]');
+  const anchors: Array<{ href: string; className: string; linkText: string }> = [];
+
+  if (typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+    doc.querySelectorAll('a[href]').forEach((el) => {
+      anchors.push({
+        href: el.getAttribute('href') || '',
+        className: el.getAttribute('class') || '',
+        linkText: (el.textContent || '').trim(),
+      });
+    });
+  } else {
+    const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = anchorRegex.exec(rawHtml)) !== null) {
+      const attrs = match[1] || '';
+      const inner = (match[2] || '').replace(/<[^>]*>/g, '').trim();
+      const hrefMatch = attrs.match(/\bhref\s*=\s*["']([^"']*)["']/i);
+      const classMatch = attrs.match(/\bclass\s*=\s*["']([^"']*)["']/i);
+      if (hrefMatch?.[1]) {
+        anchors.push({
+          href: hrefMatch[1],
+          className: classMatch?.[1] || '',
+          linkText: inner,
+        });
+      }
+    }
+  }
 
   let targetPdfUrl: string | null = null;
   const originBase = portalPageUrl.startsWith('http')
     ? portalPageUrl
     : 'https://eporcha.tech/';
 
-  anchorTags.each((_, el) => {
-    const linkText = $(el).text().trim();
-    const href = $(el).attr('href') || '';
-    const className = $(el).attr('class') || '';
-
+  for (const { href, className, linkText } of anchors) {
     const isTargetDoc =
       linkText.toLowerCase().includes(docType.toLowerCase()) ||
       href.toLowerCase().includes(docType.toLowerCase()) ||
@@ -308,13 +329,13 @@ export async function extractPdfUrl(
         const resolved = new URL(href, originBase);
         if (resolved.hostname.endsWith('eporcha.tech')) {
           targetPdfUrl = resolved.toString();
-          return false;
+          break;
         }
       } catch {
         // Ignore invalid href
       }
     }
-  });
+  }
 
   if (!targetPdfUrl) {
     throw new Error(`Could not find the ${docType} PDF link in the HTML for Mouza ${mouza}`);
