@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { geoDiscovery } from './geoDiscoveryService';
 import { geoDb } from './geographicDbService';
 import { batchMouzasForQueue, evaluateWorkWindowStatus, createInitialConcurrencyTelemetry, evaluateAutoConcurrencyStep, computeLatencyTrendWindow, createInitialSmartPauseState, evaluateSmartPauseStep, applyTaskRetryBudgetPolicy, retryFailedTasks } from './queueEngine';
@@ -6,6 +7,17 @@ import { MouzaNode, SmartSchedulerConfig, ProxyConfig, QueueTask, SmartPauseConf
 
 // Mock the global fetch
 global.fetch = vi.fn();
+
+// Mock @capacitor/core (default to web runtime; Scenario 15 flips to native Android runtime)
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: vi.fn(() => false),
+  },
+  CapacitorHttp: {
+    get: vi.fn(),
+    request: vi.fn(),
+  },
+}));
 
 // Mock geographicDbService
 vi.mock('./geographicDbService', () => ({
@@ -480,6 +492,72 @@ describe('Phase 4-7: Nationwide Geographic Discovery & Batching', () => {
     const dedupedUpazilas = await geoDiscovery.queryUpazilasFromPortalUrl('dist-brahmanbaria');
     expect(dedupedUpazilas.upazilas).toHaveLength(1);
     expect(dedupedUpazilas.sourceStatus).toBe('LIVE_SOURCE');
+  });
+
+  it('Scenario 15: Uses CapacitorHttp directly on native Android APK without hitting /api/eporcha-proxy', async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+
+    try {
+      vi.mocked(CapacitorHttp.get).mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        url: 'https://eporcha.tech/api/dlrms/upazilas?DISTRICT_BBS_CODE=12',
+        data: {
+          success: true,
+          status_code: 200,
+          data: [
+            { ID: 123623, NAME: 'কসবা', NAME_EN: 'KASBA', BBS_CODE: '63', DISTRICT_BBS_CODE: '12' },
+          ],
+        },
+      });
+
+      const upzSummary = await geoDiscovery.queryUpazilasFromPortalUrl('dist-brahmanbaria');
+      expect(upzSummary.isLive).toBe(true);
+      expect(upzSummary.sourceStatus).toBe('LIVE_SOURCE');
+      expect(upzSummary.upazilas[0].nameEn).toBe('Kasba');
+      expect(CapacitorHttp.get).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: 'https://eporcha.tech/api/dlrms/upazilas?DISTRICT_BBS_CODE=12',
+        })
+      );
+      expect(fetch).not.toHaveBeenCalled();
+
+      vi.mocked(CapacitorHttp.get).mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        url: 'https://eporcha.tech/api/dlrms/mouzas/jl-numbers?DISTRICT_BBS_CODE=12&UPAZILA_BBS_CODE=63',
+        data: {
+          success: true,
+          status_code: 200,
+          data: [
+            { ID: 360057, MOUZA_ID: 52473, MOUZA_NAME: 'আমখার', JL_NUMBER: '1' },
+            { ID: 360012, MOUZA_ID: 48822, MOUZA_NAME: 'ডাবইঘর', JL_NUMBER: '2' },
+          ],
+        },
+      });
+
+      const mouzaSummary = await geoDiscovery.queryMouzasFromPortalUrl('upz-kasba', 'dist-brahmanbaria');
+      expect(mouzaSummary.isLive).toBe(true);
+      expect(mouzaSummary.sourceStatus).toBe('LIVE_SOURCE');
+      expect(mouzaSummary.totalFound).toBe(2);
+      expect(mouzaSummary.mouzas[0].nameBn).toBe('আমখার');
+      expect(fetch).not.toHaveBeenCalled();
+
+      // Upstream HTML returned natively must still be rejected cleanly
+      vi.mocked(CapacitorHttp.get).mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+        url: 'https://eporcha.tech/api/dlrms/mouzas/jl-numbers',
+        data: '<!DOCTYPE html><html><body>Cloudflare Challenge</body></html>',
+      });
+
+      const htmlFail = await geoDiscovery.queryMouzasFromPortalUrl('upz-kasba', 'dist-brahmanbaria');
+      expect(htmlFail.isLive).toBe(false);
+      expect(htmlFail.sourceStatus).toBe('FAILED');
+      expect(htmlFail.errorMessage).toMatch(/HTML/i);
+    } finally {
+      vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
+    }
   });
 });
 

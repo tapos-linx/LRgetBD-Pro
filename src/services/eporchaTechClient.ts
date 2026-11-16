@@ -94,6 +94,8 @@ export async function fetchFromEporchaTech(
           Accept: 'application/pdf,application/json,text/html,*/*',
           'Accept-Language': 'bn-BD,bn;q=0.9,en-US;q=0.8,en;q=0.7',
           Referer: 'https://eporcha.tech/',
+          'User-Agent':
+            'Mozilla/5.0 (Linux; Android 16; CPH2689) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
         },
       });
 
@@ -251,6 +253,36 @@ export async function checkEporchaPortalHealth(): Promise<{
   latencyMs: number;
   checkedAt: string;
 }> {
+  if (isCapacitorNativeRuntime()) {
+    const start = Date.now();
+    try {
+      const response = await CapacitorHttp.get({
+        url: 'https://eporcha.tech',
+        connectTimeout: 8000,
+        readTimeout: 8000,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Linux; Android 16; CPH2689) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      const latencyMs = Date.now() - start;
+      return {
+        reachable: response.status > 0 && response.status < 500,
+        status: response.status,
+        latencyMs,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch {
+      return {
+        reachable: false,
+        status: 0,
+        latencyMs: Date.now() - start,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+  }
+
   try {
     const res = await fetch('/api/eporcha-health');
     if (!res.ok) {
@@ -277,13 +309,35 @@ export async function extractPdfUrl(
   docType: string,
   portalPageUrl: string
 ): Promise<string> {
-  const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(portalPageUrl)}`;
-  const response = await fetch(proxyUrl);
-  if (!response.ok) {
-    throw new Error(`eporcha.tech HTML fetch failed: HTTP ${response.status}`);
+  let rawHtml = '';
+  if (isCapacitorNativeRuntime()) {
+    const nativeRes = await CapacitorHttp.get({
+      url: portalPageUrl,
+      connectTimeout: 8500,
+      readTimeout: 8500,
+      responseType: 'text',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Linux; Android 16; CPH2689) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+        Referer: 'https://eporcha.tech/',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+    if (!nativeRes || nativeRes.status < 200 || nativeRes.status >= 300) {
+      throw new Error(`eporcha.tech HTML fetch failed: HTTP ${nativeRes?.status ?? 0}`);
+    }
+    rawHtml =
+      typeof nativeRes.data === 'string'
+        ? nativeRes.data
+        : JSON.stringify(nativeRes.data ?? '');
+  } else {
+    const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(portalPageUrl)}`;
+    const response = await fetch(proxyUrl);
+    if (!response.ok) {
+      throw new Error(`eporcha.tech HTML fetch failed: HTTP ${response.status}`);
+    }
+    rawHtml = await response.text();
   }
-
-  const rawHtml = await response.text();
   const anchors: Array<{ href: string; className: string; linkText: string }> = [];
 
   if (typeof DOMParser !== 'undefined') {

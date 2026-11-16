@@ -1,3 +1,4 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import {
   DistrictNode,
   GeoSourceStatus,
@@ -68,26 +69,39 @@ function normalizeLookupKey(raw: string): string {
     .replace(/[^a-z0-9]/g, '');
 }
 
+function isNativeCapacitorRuntime(): boolean {
+  try {
+    return typeof Capacitor?.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+  } catch {
+    return false;
+  }
+}
+
+const NATIVE_PORTAL_HEADERS: Record<string, string> = {
+  Accept: 'application/json,text/plain,*/*',
+  'Accept-Language': 'bn-BD,bn;q=0.9,en-US;q=0.8,en;q=0.7',
+  Referer: 'https://eporcha.tech/',
+  Origin: 'https://eporcha.tech',
+  'X-Requested-With': 'XMLHttpRequest',
+  'User-Agent':
+    'Mozilla/5.0 (Linux; Android 16; CPH2689) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
+};
+
 /**
  * Live Geographic Discovery Service for eporcha.tech.
  * Enforces strict parent-child matching, malformed/HTML rejection,
+ * native CapacitorHttp execution on Android APK (avoiding localhost SPA fallback),
  * and honest provenance (LIVE_SOURCE vs LOCAL_DATASET vs FAILED / NOT_FOUND).
  */
 export class GeoDiscoveryService {
-  private baseUrl = '/api/eporcha-proxy?url=https://eporcha.tech/api';
+  private baseUrl = 'https://eporcha.tech/api';
 
-  private async safeParseJson(response: Response): Promise<unknown> {
-    if (!response) {
-      throw new Error('Missing HTTP response object');
-    }
-
-    // Prefer .text() when implemented so HTML/empty bodies are caught prior to JSON.parse
-    if (typeof (response as { text?: unknown }).text === 'function') {
-      const text = await response.text();
-      if (typeof text !== 'string' || text.trim().length === 0) {
+  private parseJsonValue(raw: unknown): unknown {
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (!trimmed) {
         throw new Error('Empty upstream response body');
       }
-      const trimmed = text.trim();
       const lower = trimmed.toLowerCase();
       if (trimmed.startsWith('<') || lower.startsWith('<!doctype')) {
         throw new Error('Upstream response is HTML instead of JSON');
@@ -100,27 +114,63 @@ export class GeoDiscoveryService {
         );
       }
     }
+    if (raw === null || raw === undefined) {
+      throw new Error('Empty upstream response body');
+    }
+    return raw;
+  }
+
+  private async safeParseJson(response: Response): Promise<unknown> {
+    if (!response) {
+      throw new Error('Missing HTTP response object');
+    }
+
+    // Prefer .text() when implemented so HTML/empty bodies are caught prior to JSON.parse
+    if (typeof (response as { text?: unknown }).text === 'function') {
+      const text = await response.text();
+      return this.parseJsonValue(text);
+    }
 
     // Support test mocks or response wrappers that only implement .json()
     if (typeof (response as { json?: unknown }).json === 'function') {
       const parsed = await response.json();
-      if (typeof parsed === 'string') {
-        const trimmed = parsed.trim();
-        if (!trimmed) {
-          throw new Error('Empty upstream JSON string');
-        }
-        if (trimmed.startsWith('<') || trimmed.toLowerCase().startsWith('<!doctype')) {
-          throw new Error('Upstream response is HTML instead of JSON');
-        }
-        return JSON.parse(trimmed);
-      }
-      if (parsed === null || parsed === undefined) {
-        throw new Error('Upstream JSON response is empty');
-      }
-      return parsed;
+      return this.parseJsonValue(parsed);
     }
 
     throw new Error('Response object does not implement text() or json()');
+  }
+
+  /**
+   * Executes a GET request for JSON against https://eporcha.tech.
+   * - Inside Capacitor Android/iOS APK: calls CapacitorHttp.get() directly to avoid hitting
+   *   https://localhost/api/eporcha-proxy (which does not exist in the packaged APK and serves index.html).
+   * - In Web browser / Express relay / tests: calls `/api/eporcha-proxy?url=...`.
+   */
+  private async fetchPortalJson(targetPortalUrl: string): Promise<unknown> {
+    if (isNativeCapacitorRuntime()) {
+      const nativeRes = await CapacitorHttp.get({
+        url: targetPortalUrl,
+        headers: NATIVE_PORTAL_HEADERS,
+        connectTimeout: 10000,
+        readTimeout: 10000,
+      });
+
+      if (!nativeRes || nativeRes.status < 200 || nativeRes.status >= 300) {
+        throw new Error(
+          `Upstream HTTP ${nativeRes?.status ?? 'unknown'} while querying portal`
+        );
+      }
+      return this.parseJsonValue(nativeRes.data);
+    }
+
+    const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(targetPortalUrl)}`;
+    const response = await fetch(proxyUrl);
+    if (!response || !response.ok) {
+      throw new Error(
+        `Upstream HTTP ${response?.status ?? 'unknown'} while querying portal`
+      );
+    }
+    return this.safeParseJson(response);
   }
 
   private findAuthoritativeDivision(divisionId: string) {
@@ -249,51 +299,66 @@ export class GeoDiscoveryService {
     return null;
   }
 
-  async discoverDistricts(divisionId: string): Promise<DistrictNode[]> {
-    const url = `${this.baseUrl}/get-districts?division_id=${encodeURIComponent(divisionId)}`;
-    try {
-      const response = await fetch(url);
-      if (response && response.ok) {
-        const raw = await this.safeParseJson(response);
-        const rawList = Array.isArray(raw)
-          ? raw
-          : Array.isArray((raw as { data?: unknown })?.data)
-          ? ((raw as { data: unknown[] }).data)
-          : [];
-        if (rawList.length > 0) {
-          const seenIds = new Set<string>();
-          const districts: DistrictNode[] = [];
-          for (const item of rawList as Record<string, unknown>[]) {
-            const rawCode = String(item.code ?? item.BBS_CODE ?? item.id ?? '').trim();
-            const baseId = String(item.id ?? item.BBS_CODE ?? '').trim();
-            if (!baseId && !rawCode) continue;
-            const id = baseId.startsWith('dist-') ? baseId : `dist-${baseId || rawCode}`;
-            if (seenIds.has(id)) continue;
-            seenIds.add(id);
-            const nameEn = formatPortalNameEn(
-              String(item.name_en ?? item.NAME_EN ?? item.name ?? 'Unknown District')
-            );
-            const nameBn = String(item.name_bn ?? item.NAME ?? item.name_bd ?? item.name ?? '').trim();
-            if (!nameEn) continue;
-            districts.push({
-              id,
-              code: rawCode || id.replace(/^dist-/, ''),
-              nameEn,
-              nameBn: nameBn || nameEn,
-              eporchaSlug: nameEn.toLowerCase().replace(/\s+/g, '-'),
-              upazilas: [],
-            });
-          }
+  private resolveDivisionBbsCode(divisionId: string): string | null {
+    const authDiv = this.findAuthoritativeDivision(divisionId);
+    if (authDiv && authDiv.districts.length > 0) {
+      const sampleDistCode = String(authDiv.districts[0].code).trim().padStart(2, '0');
+      const upzMatch = (bangladeshUpazilas as UpazilaBbsRecord[]).find(
+        (u) => String(u.DISTRICT_BBS_CODE).trim().padStart(2, '0') === sampleDistCode
+      );
+      if (upzMatch?.DIVISION_BBS_CODE) {
+        return String(upzMatch.DIVISION_BBS_CODE).trim().padStart(2, '0');
+      }
+    }
+    const clean = divisionId.replace(/^div-/, '').trim();
+    return /^\d{1,2}$/.test(clean) ? clean.padStart(2, '0') : null;
+  }
 
-          for (const d of districts) {
-            try {
-              void Promise.resolve(geoDb.saveDistrict(d, divisionId)).catch(() => {});
-            } catch {
-              // Ignore Firestore write error if offline/unauthenticated
-            }
-          }
-          if (districts.length > 0) return districts;
+  async discoverDistricts(divisionId: string): Promise<DistrictNode[]> {
+    const divBbsCode = this.resolveDivisionBbsCode(divisionId);
+    const url = divBbsCode
+      ? `${this.baseUrl}/dlrms/districts?DIVISION_BBS_CODE=${encodeURIComponent(divBbsCode)}`
+      : `${this.baseUrl}/get-districts?division_id=${encodeURIComponent(divisionId)}`;
+    try {
+      const raw = await this.fetchPortalJson(url);
+      const rawList = Array.isArray(raw)
+        ? raw
+        : Array.isArray((raw as { data?: unknown })?.data)
+        ? ((raw as { data: unknown[] }).data)
+        : [];
+      if (rawList.length > 0) {
+        const seenIds = new Set<string>();
+        const districts: DistrictNode[] = [];
+        for (const item of rawList as Record<string, unknown>[]) {
+          const rawCode = String(item.BBS_CODE ?? item.code ?? item.id ?? '').trim();
+          const baseId = String(item.id ?? item.BBS_CODE ?? '').trim();
+          if (!baseId && !rawCode) continue;
+          const id = baseId.startsWith('dist-') ? baseId : `dist-${baseId || rawCode}`;
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+          const nameEn = formatPortalNameEn(
+            String(item.NAME_EN ?? item.name_en ?? item.name ?? 'Unknown District')
+          );
+          const nameBn = String(item.NAME ?? item.name_bn ?? item.name_bd ?? item.name ?? '').trim();
+          if (!nameEn) continue;
+          districts.push({
+            id,
+            code: rawCode || id.replace(/^dist-/, ''),
+            nameEn,
+            nameBn: nameBn || nameEn,
+            eporchaSlug: nameEn.toLowerCase().replace(/\s+/g, '-'),
+            upazilas: [],
+          });
         }
+
+        for (const d of districts) {
+          try {
+            void Promise.resolve(geoDb.saveDistrict(d, divisionId)).catch(() => {});
+          } catch {
+            // Ignore Firestore write error if offline/unauthenticated
+          }
+        }
+        if (districts.length > 0) return districts;
       }
     } catch (error) {
       console.error('District Discovery Error:', error);
@@ -329,110 +394,104 @@ export class GeoDiscoveryService {
     const retrievedAt = new Date().toISOString();
 
     const targetPortalUrl = distCode
-      ? `https://eporcha.tech/api/dlrms/upazilas?DISTRICT_BBS_CODE=${encodeURIComponent(distCode)}`
-      : `https://eporcha.tech/api/get-upazilas?district_id=${encodeURIComponent(cleanId)}`;
+      ? `${this.baseUrl}/dlrms/upazilas?DISTRICT_BBS_CODE=${encodeURIComponent(distCode)}`
+      : `${this.baseUrl}/get-upazilas?district_id=${encodeURIComponent(cleanId)}`;
 
-    const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(targetPortalUrl)}`;
     let lastError: string | undefined;
 
     try {
-      const response = await fetch(proxyUrl);
-      if (response && response.ok) {
-        const json = await this.safeParseJson(response);
-        let rawList: Record<string, unknown>[] = Array.isArray(json)
-          ? (json as Record<string, unknown>[])
-          : Array.isArray((json as { data?: unknown })?.data)
-          ? ((json as { data: Record<string, unknown>[] }).data)
-          : [];
+      const json = await this.fetchPortalJson(targetPortalUrl);
+      let rawList: Record<string, unknown>[] = Array.isArray(json)
+        ? (json as Record<string, unknown>[])
+        : Array.isArray((json as { data?: unknown })?.data)
+        ? ((json as { data: Record<string, unknown>[] }).data)
+        : [];
 
-        // Enforce strict parent District BBS code match if upstream returns DISTRICT_BBS_CODE
-        if (distCode && rawList.length > 0 && rawList[0]?.DISTRICT_BBS_CODE !== undefined) {
-          const paddedDist = String(distCode).padStart(2, '0');
-          rawList = rawList.filter(
-            (u) => String(u.DISTRICT_BBS_CODE).trim().padStart(2, '0') === paddedDist
-          );
-        }
-
-        if (rawList.length > 0) {
-          const upazilas: UpazilaNode[] = [];
-          const seenIds = new Set<string>();
-          const seenSourceKeys = new Set<string>();
-
-          for (const u of rawList) {
-            const rawNameEn = u.NAME_EN ?? u.name_en ?? u.name;
-            const rawNameBn = u.NAME ?? u.name_bn ?? u.name_bd ?? rawNameEn;
-            if (!rawNameEn && !rawNameBn) continue;
-
-            const formattedEn = formatPortalNameEn(String(rawNameEn || rawNameBn));
-            const upzSlug = formattedEn
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-|-$/g, '');
-
-            const isNabinagar =
-              (upzSlug === 'nabinagar' && (!distCode || String(distCode).padStart(2, '0') === '12')) ||
-              (String(u.DISTRICT_BBS_CODE) === '12' && String(u.BBS_CODE) === '85');
-
-            let id = isNabinagar
-              ? 'upz-nabinagar'
-              : u.id && String(u.id).startsWith('upz-')
-              ? String(u.id)
-              : upzSlug
-              ? `upz-${upzSlug}`
-              : `upz-${u.BBS_CODE || u.ID || u.id}`;
-
-            const sourceKey =
-              u.BBS_CODE !== undefined
-                ? `bbs:${String(u.DISTRICT_BBS_CODE || distCode || '').trim()}:${String(u.BBS_CODE).trim()}`
-                : u.ID !== undefined
-                ? `rawid:${String(u.ID)}`
-                : `slug:${id}`;
-
-            if (seenSourceKeys.has(sourceKey)) {
-              continue;
-            }
-            seenSourceKeys.add(sourceKey);
-
-            if (seenIds.has(id)) {
-              id = `${id}-${u.BBS_CODE || u.ID || upazilas.length + 1}`;
-            }
-            seenIds.add(id);
-
-            upazilas.push({
-              id,
-              nameEn: isNabinagar ? 'Nabinagar' : formattedEn,
-              nameBn: isNabinagar ? 'নবীনগর' : String(rawNameBn).trim(),
-              eporchaSlug: isNabinagar ? 'nabinagar' : upzSlug,
-              mouzas: isNabinagar ? [...NABINAGAR_176_MOUZAS] : [],
-            });
-          }
-
-          if (upazilas.length > 0) {
-            for (const u of upazilas) {
-              try {
-                void Promise.resolve(geoDb.saveUpazila(u, districtId)).catch(() => {});
-              } catch {
-                // Ignore Firestore write error
-              }
-            }
-
-            return {
-              districtId,
-              districtNameEn: authDist?.nameEn || cleanId,
-              districtNameBn: authDist?.nameBn || cleanId,
-              totalFound: upazilas.length,
-              portalUrl: targetPortalUrl,
-              upazilas,
-              sourceStatus: 'LIVE_SOURCE',
-              isLive: true,
-              retrievedAt,
-            };
-          }
-        }
-        lastError = `Portal returned 0 Upazilas for district ${authDist?.nameEn || cleanId}`;
-      } else {
-        lastError = `Upstream HTTP ${response?.status ?? 'unknown'} while querying Upazilas`;
+      // Enforce strict parent District BBS code match if upstream returns DISTRICT_BBS_CODE
+      if (distCode && rawList.length > 0 && rawList[0]?.DISTRICT_BBS_CODE !== undefined) {
+        const paddedDist = String(distCode).padStart(2, '0');
+        rawList = rawList.filter(
+          (u) => String(u.DISTRICT_BBS_CODE).trim().padStart(2, '0') === paddedDist
+        );
       }
+
+      if (rawList.length > 0) {
+        const upazilas: UpazilaNode[] = [];
+        const seenIds = new Set<string>();
+        const seenSourceKeys = new Set<string>();
+
+        for (const u of rawList) {
+          const rawNameEn = u.NAME_EN ?? u.name_en ?? u.name;
+          const rawNameBn = u.NAME ?? u.name_bn ?? u.name_bd ?? rawNameEn;
+          if (!rawNameEn && !rawNameBn) continue;
+
+          const formattedEn = formatPortalNameEn(String(rawNameEn || rawNameBn));
+          const upzSlug = formattedEn
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '');
+
+          const isNabinagar =
+            (upzSlug === 'nabinagar' && (!distCode || String(distCode).padStart(2, '0') === '12')) ||
+            (String(u.DISTRICT_BBS_CODE) === '12' && String(u.BBS_CODE) === '85');
+
+          let id = isNabinagar
+            ? 'upz-nabinagar'
+            : u.id && String(u.id).startsWith('upz-')
+            ? String(u.id)
+            : upzSlug
+            ? `upz-${upzSlug}`
+            : `upz-${u.BBS_CODE || u.ID || u.id}`;
+
+          const sourceKey =
+            u.BBS_CODE !== undefined
+              ? `bbs:${String(u.DISTRICT_BBS_CODE || distCode || '').trim()}:${String(u.BBS_CODE).trim()}`
+              : u.ID !== undefined
+              ? `rawid:${String(u.ID)}`
+              : `slug:${id}`;
+
+          if (seenSourceKeys.has(sourceKey)) {
+            continue;
+          }
+          seenSourceKeys.add(sourceKey);
+
+          if (seenIds.has(id)) {
+            id = `${id}-${u.BBS_CODE || u.ID || upazilas.length + 1}`;
+          }
+          seenIds.add(id);
+
+          upazilas.push({
+            id,
+            nameEn: isNabinagar ? 'Nabinagar' : formattedEn,
+            nameBn: isNabinagar ? 'নবীনগর' : String(rawNameBn).trim(),
+            eporchaSlug: isNabinagar ? 'nabinagar' : upzSlug,
+            mouzas: isNabinagar ? [...NABINAGAR_176_MOUZAS] : [],
+          });
+        }
+
+        if (upazilas.length > 0) {
+          for (const u of upazilas) {
+            try {
+              void Promise.resolve(geoDb.saveUpazila(u, districtId)).catch(() => {});
+            } catch {
+              // Ignore Firestore write error
+            }
+          }
+
+          return {
+            districtId,
+            districtNameEn: authDist?.nameEn || cleanId,
+            districtNameBn: authDist?.nameBn || cleanId,
+            totalFound: upazilas.length,
+            portalUrl: targetPortalUrl,
+            upazilas,
+            sourceStatus: 'LIVE_SOURCE',
+            isLive: true,
+            retrievedAt,
+          };
+        }
+      }
+      lastError = `Portal returned 0 Upazilas for district ${authDist?.nameEn || cleanId}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
       console.warn('Primary Upazila URL discovery error:', error);
@@ -510,193 +569,120 @@ export class GeoDiscoveryService {
     }
 
     const targetPortalUrl = bbsMatch
-      ? `https://eporcha.tech/api/dlrms/mouzas/jl-numbers?DISTRICT_BBS_CODE=${bbsMatch.DISTRICT_BBS_CODE}&UPAZILA_BBS_CODE=${bbsMatch.BBS_CODE}`
-      : `https://eporcha.tech/api/get-mouzas?upazila_id=${encodeURIComponent(cleanId)}`;
+      ? `${this.baseUrl}/dlrms/mouzas/jl-numbers?DISTRICT_BBS_CODE=${bbsMatch.DISTRICT_BBS_CODE}&UPAZILA_BBS_CODE=${bbsMatch.BBS_CODE}`
+      : `${this.baseUrl}/get-mouzas?upazila_id=${encodeURIComponent(cleanId)}`;
 
-    const proxyUrl = `/api/eporcha-proxy?url=${encodeURIComponent(targetPortalUrl)}`;
     let lastError: string | undefined;
 
     try {
-      const response = await fetch(proxyUrl);
-      if (response && response.ok) {
-        const json = await this.safeParseJson(response);
-        const rawList: Record<string, unknown>[] = Array.isArray(json)
-          ? (json as Record<string, unknown>[])
-          : Array.isArray((json as { data?: unknown })?.data)
-          ? ((json as { data: Record<string, unknown>[] }).data)
-          : [];
+      const json = await this.fetchPortalJson(targetPortalUrl);
+      const rawList: Record<string, unknown>[] = Array.isArray(json)
+        ? (json as Record<string, unknown>[])
+        : Array.isArray((json as { data?: unknown })?.data)
+        ? ((json as { data: Record<string, unknown>[] }).data)
+        : [];
 
-        if (rawList.length > 0) {
-          const mouzas: MouzaNode[] = [];
-          const seenJlNos = new Set<string>();
+      if (rawList.length > 0) {
+        const mouzas: MouzaNode[] = [];
+        const seenJlNos = new Set<string>();
 
-          for (const item of rawList) {
-            const rawJl = item.JL_NUMBER ?? item.jl_no ?? item.jlNo;
-            const rawNameBn =
-              item.MOUZA_NAME ?? item.name_bn ?? item.nameBn ?? item.name;
-            const rawNameEn =
-              item.SURVEY_NAME_EN ??
-              item.name_en ??
-              item.nameEn ??
-              (rawNameBn ? String(rawNameBn) : `Mouza ${rawJl}`);
+        for (const item of rawList) {
+          const rawJl = item.JL_NUMBER ?? item.jl_no ?? item.jlNo;
+          const rawNameBn =
+            item.MOUZA_NAME ?? item.name_bn ?? item.nameBn ?? item.name;
+          const rawNameEn =
+            item.MOUZA_NAME_EN ??
+            item.name_en ??
+            item.nameEn ??
+            item.SURVEY_NAME_EN ??
+            (rawNameBn ? String(rawNameBn) : `Mouza ${rawJl}`);
 
-            if (!rawJl || (!rawNameBn && !rawNameEn)) {
-              try {
-                void Promise.resolve(
-                  geoDb.logRejection(
-                    item,
-                    'Missing mandatory identifiers (JL No or Name)',
-                    'eporcha.tech'
-                  )
-                ).catch(() => {});
-              } catch {
-                // Ignore logging errors
-              }
-              continue;
-            }
-
-            const jlNo = String(rawJl).trim();
-            const id = `mz-${cleanId}-${jlNo}`;
-
-            if (seenJlNos.has(jlNo)) {
-              try {
-                void Promise.resolve(
-                  geoDb.logRejection(
-                    item,
-                    `Duplicate Mouza JL record (${jlNo}) skipped`,
-                    'eporcha.tech'
-                  )
-                ).catch(() => {});
-              } catch {
-                // Ignore logging errors
-              }
-              continue;
-            }
-
-            seenJlNos.add(jlNo);
-            mouzas.push({
-              id,
-              jlNo,
-              nameEn: String(rawNameEn).trim(),
-              nameBn: String(rawNameBn || rawNameEn).trim(),
-              unionNameEn: String(
-                item.union_en ||
-                  item.unionNameEn ||
-                  (bbsMatch ? `${bbsMatch.NAME_EN} Area` : 'Discovered Union')
-              ),
-              unionNameBn: String(
-                item.union_bn ||
-                  item.unionNameBn ||
-                  (bbsMatch ? `${bbsMatch.NAME} এলাকা` : 'ডিসকভার্ড এলাকা')
-              ),
-              availableSurveys: [
-                'CS',
-                'SA',
-                'RS',
-                'BS',
-                'MUTATION',
-              ] as SurveyType[],
-              estimatedKhatians: Number(item.khatian_count) || 450,
-              estimatedDags: Number(item.dag_count) || 1150,
-              mapSheets: [1],
-            });
-          }
-
-          if (mouzas.length > 0) {
+          if (!rawJl || (!rawNameBn && !rawNameEn)) {
             try {
-              void Promise.resolve(geoDb.saveMouzas(mouzas, upazilaId)).catch(() => {});
+              void Promise.resolve(
+                geoDb.logRejection(
+                  item,
+                  'Missing mandatory identifiers (JL No or Name)',
+                  'eporcha.tech'
+                )
+              ).catch(() => {});
             } catch {
-              // Ignore Firestore write error
+              // Ignore logging errors
             }
-
-            return {
-              upazilaId,
-              upazilaNameEn: bbsMatch?.NAME_EN || cleanId,
-              upazilaNameBn: bbsMatch?.NAME || cleanId,
-              totalFound: mouzas.length,
-              portalUrl: targetPortalUrl,
-              mouzas,
-              sourceStatus: 'LIVE_SOURCE',
-              isLive: true,
-              retrievedAt,
-            };
+            continue;
           }
+
+          const jlNo = String(rawJl).trim();
+          const id = `mz-${cleanId}-${jlNo}`;
+
+          if (seenJlNos.has(jlNo)) {
+            try {
+              void Promise.resolve(
+                geoDb.logRejection(
+                  item,
+                  `Duplicate Mouza JL record (${jlNo}) skipped`,
+                  'eporcha.tech'
+                )
+              ).catch(() => {});
+            } catch {
+              // Ignore logging errors
+            }
+            continue;
+          }
+
+          seenJlNos.add(jlNo);
+          mouzas.push({
+            id,
+            jlNo,
+            nameEn: String(rawNameEn).trim(),
+            nameBn: String(rawNameBn || rawNameEn).trim(),
+            unionNameEn: String(
+              item.union_en ||
+                item.unionNameEn ||
+                (bbsMatch ? `${bbsMatch.NAME_EN} Area` : 'Discovered Union')
+            ),
+            unionNameBn: String(
+              item.union_bn ||
+                item.unionNameBn ||
+                (bbsMatch ? `${bbsMatch.NAME} এলাকা` : 'ডিসকভার্ড এলাকা')
+            ),
+            availableSurveys: [
+              'CS',
+              'SA',
+              'RS',
+              'BS',
+              'MUTATION',
+            ] as SurveyType[],
+            estimatedKhatians: Number(item.khatian_count) || 450,
+            estimatedDags: Number(item.dag_count) || 1150,
+            mapSheets: [1],
+          });
         }
-        lastError = `Portal returned 0 valid Mouzas for ${bbsMatch?.NAME_EN || cleanId}`;
-      } else {
-        lastError = `Upstream HTTP ${response?.status ?? 'unknown'} while querying Mouzas`;
+
+        if (mouzas.length > 0) {
+          try {
+            void Promise.resolve(geoDb.saveMouzas(mouzas, upazilaId)).catch(() => {});
+          } catch {
+            // Ignore Firestore write error
+          }
+
+          return {
+            upazilaId,
+            upazilaNameEn: bbsMatch?.NAME_EN || cleanId,
+            upazilaNameBn: bbsMatch?.NAME || cleanId,
+            totalFound: mouzas.length,
+            portalUrl: targetPortalUrl,
+            mouzas,
+            sourceStatus: 'LIVE_SOURCE',
+            isLive: true,
+            retrievedAt,
+          };
+        }
       }
+      lastError = `Portal returned 0 valid Mouzas for ${bbsMatch?.NAME_EN || cleanId}`;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
       console.warn('Primary eporcha.tech URL query failed:', error);
-    }
-
-    // Secondary fallback only if primary targeted DLRMS endpoint URL was used
-    if (bbsMatch) {
-      const fallbackLegacyUrl = `${this.baseUrl}/get-mouzas?upazila_id=${encodeURIComponent(cleanId)}`;
-      try {
-        const response = await fetch(fallbackLegacyUrl);
-        if (response && response.ok) {
-          const raw = await this.safeParseJson(response);
-          const list: Record<string, unknown>[] = Array.isArray(raw)
-            ? (raw as Record<string, unknown>[])
-            : Array.isArray((raw as { data?: unknown })?.data)
-            ? ((raw as { data: Record<string, unknown>[] }).data)
-            : [];
-
-          if (list.length > 0) {
-            const mouzas: MouzaNode[] = [];
-            const seen = new Set<string>();
-
-            for (const m of list) {
-              const rawJl = m.jl_no ?? m.JL_NUMBER;
-              const rawNameEn = m.name_en ?? m.SURVEY_NAME_EN;
-              const rawNameBn = m.name_bn ?? m.MOUZA_NAME;
-
-              if (!rawJl || (!rawNameEn && !rawNameBn)) continue;
-              const jlNo = String(rawJl).trim();
-              const id = `mz-${cleanId}-${jlNo}`;
-              if (seen.has(id)) continue;
-              seen.add(id);
-
-              mouzas.push({
-                id,
-                jlNo,
-                nameEn: String(rawNameEn || rawNameBn),
-                nameBn: String(rawNameBn || rawNameEn),
-                unionNameEn: String(m.union_en || 'Discovered Union'),
-                unionNameBn: String(m.union_bn || 'ডিসকভার্ড ইউনিয়ন'),
-                availableSurveys: ['CS', 'SA', 'RS', 'BS', 'MUTATION'],
-                estimatedKhatians: Number(m.khatian_count) || 500,
-                estimatedDags: Number(m.dag_count) || 1200,
-                mapSheets: [1],
-              });
-            }
-
-            if (mouzas.length > 0) {
-              try {
-                void Promise.resolve(geoDb.saveMouzas(mouzas, upazilaId)).catch(() => {});
-              } catch {
-                // Ignore Firestore write error
-              }
-              return {
-                upazilaId,
-                upazilaNameEn: bbsMatch?.NAME_EN || cleanId,
-                upazilaNameBn: bbsMatch?.NAME || cleanId,
-                totalFound: mouzas.length,
-                portalUrl: fallbackLegacyUrl,
-                mouzas,
-                sourceStatus: 'LIVE_SOURCE',
-                isLive: true,
-                retrievedAt,
-              };
-            }
-          }
-        }
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
-        console.error('Fallback discovery error:', err);
-      }
     }
 
     // Explicit local dataset fallback ONLY for matching authoritative upazilas (strict parent check)
